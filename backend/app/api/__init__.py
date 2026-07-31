@@ -1,0 +1,1 @@
+from app.api.social_post import router as social_post_router
