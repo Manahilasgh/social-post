@@ -1,9 +1,9 @@
-import os
-
-import requests
 from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
+import os
+import requests
 
 from app.database import get_db
 from app.models.social_account import SocialAccount
@@ -18,17 +18,40 @@ FB_API_VERSION = "v21.0"
 FB_OAUTH_DIALOG_URL = f"https://www.facebook.com/{FB_API_VERSION}/dialog/oauth"
 FB_GRAPH_URL = f"https://graph.facebook.com/{FB_API_VERSION}"
 
-# Permissions needed to read Page list and publish to a Page
 FB_SCOPES = "pages_show_list,pages_manage_posts,pages_read_engagement"
 
 
+# ---------- List connected accounts (NEW) ----------
+
+class SocialAccountResponse(BaseModel):
+    id: int
+    platform: str
+    platform_account_id: str
+    display_name: str | None
+
+    class Config:
+        from_attributes = True
+
+
+@router.get("", response_model=list[SocialAccountResponse])
+def list_social_accounts(user_id: int = Query(...), db: Session = Depends(get_db)):
+    """
+    Returns all connected accounts for a user, across all platforms.
+    Frontend uses this to show 'Connected' vs 'Connect' state per platform.
+    Never returns access_token — this is a public-safe summary only.
+    """
+    accounts = (
+        db.query(SocialAccount)
+        .filter(SocialAccount.user_id == user_id)
+        .all()
+    )
+    return accounts
+
+
+# ---------- Facebook OAuth: connect (unchanged) ----------
+
 @router.get("/facebook/connect")
 def facebook_connect(user_id: int = Query(...)):
-    """
-    Step 1: Redirect the user to Facebook's OAuth dialog.
-    `user_id` is passed through Facebook's `state` param so we know who's
-    connecting when the callback comes back.
-    """
     if not FB_APP_ID:
         raise HTTPException(status_code=500, detail="FACEBOOK_APP_ID is not configured")
 
@@ -43,20 +66,15 @@ def facebook_connect(user_id: int = Query(...)):
     return RedirectResponse(url=f"{FB_OAUTH_DIALOG_URL}?{query_string}")
 
 
+# ---------- Facebook OAuth: callback (unchanged) ----------
+
 @router.get("/facebook/callback")
 def facebook_callback(code: str = Query(...), state: str = Query(...), db: Session = Depends(get_db)):
-    """
-    Step 2: Facebook redirects here with a `code`. We exchange it for a
-    user access token, upgrade it to a long-lived token, then fetch the
-    user's Pages (each Page comes with its own Page access token) and
-    save them to social_accounts.
-    """
     if not FB_APP_ID or not FB_APP_SECRET:
         raise HTTPException(status_code=500, detail="Facebook app credentials not configured")
 
     user_id = int(state)
 
-    # 2a. Exchange the auth code for a short-lived user access token
     token_resp = requests.get(
         f"{FB_GRAPH_URL}/oauth/access_token",
         params={
@@ -72,7 +90,6 @@ def facebook_callback(code: str = Query(...), state: str = Query(...), db: Sessi
 
     short_lived_token = token_resp.json().get("access_token")
 
-    # 2b. Upgrade to a long-lived user access token (~60 days)
     long_lived_resp = requests.get(
         f"{FB_GRAPH_URL}/oauth/access_token",
         params={
@@ -88,8 +105,6 @@ def facebook_callback(code: str = Query(...), state: str = Query(...), db: Sessi
 
     long_lived_user_token = long_lived_resp.json().get("access_token")
 
-    # 2c. Fetch the Pages this user manages (each includes its own Page access token,
-    # which does not expire as long as the user token remains valid)
     pages_resp = requests.get(
         f"{FB_GRAPH_URL}/me/accounts",
         params={"access_token": long_lived_user_token},
