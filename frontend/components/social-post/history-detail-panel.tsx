@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import type { HistoryEntry, PublishStatus } from "@/app/dashboard/history/page";
 import { STATUS_STYLES, mediaUrl } from "@/app/dashboard/history/page";
+import { useAuth } from "@/lib/auth-context";
+import { apiGet, API_BASE } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -16,8 +18,6 @@ interface Props {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-const API_BASE = "http://localhost:8000";
 
 function formatDateTime(iso: string) {
   return new Date(iso).toLocaleString("en-US", {
@@ -64,6 +64,7 @@ export default function HistoryDetailPanel({ id, onClose }: Props) {
   const [entry, setEntry] = useState<HistoryEntry | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { token } = useAuth();
 
   useEffect(() => {
     if (id === null) {
@@ -78,12 +79,10 @@ export default function HistoryDetailPanel({ id, onClose }: Props) {
       setLoading(true);
       setError(null);
       try {
-        const res = await fetch(`${API_BASE}/api/social-post/history/${id}`);
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body.detail ?? `${res.status}: ${res.statusText}`);
-        }
-        const data: HistoryEntry = await res.json();
+        const data = await apiGet<HistoryEntry>(
+          `${API_BASE}/api/social-post/history/${id}`,
+          token
+        );
         if (!cancelled) setEntry(data);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Unknown error");
@@ -94,7 +93,7 @@ export default function HistoryDetailPanel({ id, onClose }: Props) {
 
     fetchEntry();
     return () => { cancelled = true; };
-  }, [id]);
+  }, [id, token]);
 
   // Close on Escape
   useEffect(() => {

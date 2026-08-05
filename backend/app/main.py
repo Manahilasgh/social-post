@@ -11,6 +11,7 @@ from app.api.social_post import router as social_post_router
 from app.api.social_accounts import router as social_accounts_router
 from app.api.images import router as images_router
 from fastapi.staticfiles import StaticFiles
+from app.api.auth import router as auth_router
 
 
 app = FastAPI(title="Social Post API")
@@ -20,6 +21,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "https://social-post-sage.vercel.app"
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -29,7 +31,7 @@ app.add_middleware(
 app.include_router(social_post_router)
 app.include_router(social_accounts_router)
 app.include_router(images_router)
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+app.include_router(auth_router)
 
 
 @app.get("/health")

@@ -22,7 +22,7 @@ const jetbrainsMono = JetBrains_Mono({
 // Template registry — add more variants here as needed
 // ---------------------------------------------------------------------------
 
-export type TemplateVariant = "dark" | "light";
+export type TemplateVariant = "dark" | "light" | "minimal" | "bold" | "split";
 
 export interface TemplateDefinition {
   id: TemplateVariant;
@@ -30,8 +30,11 @@ export interface TemplateDefinition {
 }
 
 export const TEMPLATES: TemplateDefinition[] = [
-  { id: "dark",  label: "Dark"  },
-  { id: "light", label: "Light" },
+  { id: "dark",    label: "Dark"    },
+  { id: "light",   label: "Light"   },
+  { id: "minimal", label: "Minimal" },
+  { id: "bold",    label: "Bold"    },
+  { id: "split",   label: "Split"   },
 ];
 
 // ---------------------------------------------------------------------------
@@ -69,11 +72,20 @@ export default function NewsPostCard({
 }: NewsPostCardProps) {
   const fontVars = `${barlowCondensed.variable} ${sourceSerif.variable} ${jetbrainsMono.variable}`;
   const editProps = { onChangeHeadline, onChangeDescription };
+  const sharedProps = { imageUrl, source, date, headline, description, hashtags, fontVars, ...editProps };
 
-  if (variant === "light") {
-    return <LightCard {...{ imageUrl, source, date, headline, description, hashtags, fontVars, ...editProps }} />;
+  switch (variant) {
+    case "light":
+      return <LightCard {...sharedProps} />;
+    case "minimal":
+      return <MinimalCard {...sharedProps} />;
+    case "bold":
+      return <BoldCard {...sharedProps} />;
+    case "split":
+      return <SplitCard {...sharedProps} />;
+    default:
+      return <DarkCard {...sharedProps} />;
   }
-  return <DarkCard {...{ imageUrl, source, date, headline, description, hashtags, fontVars, ...editProps }} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -303,6 +315,293 @@ function LightCard({
             </div>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+// ---------------------------------------------------------------------------
+// Minimal variant — clean white/light background, no photo overlay
+// ---------------------------------------------------------------------------
+
+function MinimalCard({
+  source, date, headline, description, hashtags, fontVars,
+  onChangeHeadline, onChangeDescription,
+}: InternalProps) {
+  return (
+    <div
+      id="news-post-card"
+      className={fontVars}
+      style={{
+        width: 1080, height: 1350,
+        position: "relative", overflow: "hidden",
+        backgroundColor: "#FEFEFE", fontFamily: "var(--font-body)",
+        display: "flex", flexDirection: "column", justifyContent: "center",
+        padding: "80px 72px",
+      }}
+    >
+      {/* Accent line */}
+      <div style={{ 
+        width: 120, height: 4, backgroundColor: "#DC2626", 
+        marginBottom: 48, borderRadius: 2 
+      }} />
+
+      {/* Source / date */}
+      <div style={{ 
+        display: "flex", alignItems: "center", gap: 12,
+        fontFamily: "var(--font-mono)", fontSize: 24, letterSpacing: "0.1em",
+        color: "#374151", textTransform: "uppercase", marginBottom: 36
+      }}>
+        <span style={{ 
+          width: 8, height: 8, borderRadius: "50%", 
+          backgroundColor: "#DC2626", display: "inline-block" 
+        }} />
+        {source} · {date}
+      </div>
+
+      {/* Headline — editable */}
+      <EditableField
+        as="h1"
+        value={headline}
+        onChange={onChangeHeadline}
+        singleLine
+        editHintColor="rgba(17,24,39,0.08)"
+        style={{ 
+          margin: "0 0 40px 0", fontFamily: "var(--font-display)", 
+          fontWeight: 800, fontSize: 84, lineHeight: 0.95, 
+          letterSpacing: "-0.02em", color: "#111827", 
+          textTransform: "uppercase" 
+        }}
+      />
+
+      {/* Description — editable */}
+      <EditableField
+        as="p"
+        value={description}
+        onChange={onChangeDescription}
+        editHintColor="rgba(75,85,99,0.12)"
+        style={{ 
+          margin: "0 0 48px 0", fontFamily: "var(--font-body)", 
+          fontWeight: 400, fontSize: 32, lineHeight: 1.5, 
+          color: "#4B5563", maxWidth: 900 
+        }}
+      />
+
+      {/* Hashtags */}
+      {hashtags.length > 0 && (
+        <div style={{ 
+          display: "flex", flexWrap: "wrap", gap: 16, 
+          fontFamily: "var(--font-mono)", fontSize: 22, color: "#DC2626" 
+        }}>
+          {hashtags.map((tag) => (
+            <span key={tag} style={{ 
+              padding: "8px 16px", 
+              backgroundColor: "rgba(220,38,38,0.08)",
+              border: "1px solid rgba(220,38,38,0.2)", 
+              borderRadius: 8 
+            }}>
+              #{tag.replace(/\s+/g, "")}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Bold variant — photo fills entire card with heavy solid color band at bottom
+// ---------------------------------------------------------------------------
+
+function BoldCard({
+  imageUrl, source, date, headline, description, hashtags, fontVars,
+  onChangeHeadline, onChangeDescription,
+}: InternalProps) {
+  const BAND_HEIGHT = 420;
+
+  return (
+    <div
+      id="news-post-card"
+      className={fontVars}
+      style={{
+        width: 1080, height: 1350,
+        position: "relative", overflow: "hidden",
+        backgroundColor: "#000000", fontFamily: "var(--font-body)",
+      }}
+    >
+      {/* Full background image */}
+      <img src={imageUrl} alt=""
+        crossOrigin="anonymous"
+        style={{ 
+          position: "absolute", inset: 0, 
+          width: "100%", height: "100%", objectFit: "cover" 
+        }}
+      />
+
+      {/* Solid color band at bottom */}
+      <div style={{
+        position: "absolute", bottom: 0, left: 0, right: 0,
+        height: BAND_HEIGHT, backgroundColor: "#F59E0B",
+        display: "flex", flexDirection: "column", justifyContent: "center",
+        padding: "0 60px",
+      }}>
+        {/* Source / date */}
+        <div style={{ 
+          display: "flex", alignItems: "center", gap: 10,
+          fontFamily: "var(--font-mono)", fontSize: 20, letterSpacing: "0.1em",
+          color: "#000000", textTransform: "uppercase", marginBottom: 20
+        }}>
+          <span style={{ 
+            width: 8, height: 8, borderRadius: "50%", 
+            backgroundColor: "#000000", display: "inline-block" 
+          }} />
+          {source} · {date}
+        </div>
+
+        {/* Headline — editable */}
+        <EditableField
+          as="h1"
+          value={headline}
+          onChange={onChangeHeadline}
+          singleLine
+          editHintColor="rgba(0,0,0,0.15)"
+          style={{ 
+            margin: "0 0 24px 0", fontFamily: "var(--font-display)", 
+            fontWeight: 800, fontSize: 64, lineHeight: 0.98, 
+            letterSpacing: "-0.015em", color: "#000000", 
+            textTransform: "uppercase" 
+          }}
+        />
+
+        {/* Description — editable */}
+        <EditableField
+          as="p"
+          value={description}
+          onChange={onChangeDescription}
+          editHintColor="rgba(0,0,0,0.1)"
+          style={{ 
+            margin: "0 0 28px 0", fontFamily: "var(--font-body)", 
+            fontWeight: 600, fontSize: 26, lineHeight: 1.3, 
+            color: "#000000", maxWidth: 800 
+          }}
+        />
+
+        {/* Hashtags */}
+        {hashtags.length > 0 && (
+          <div style={{ 
+            display: "flex", flexWrap: "wrap", gap: 10, 
+            fontFamily: "var(--font-mono)", fontSize: 18, color: "#000000" 
+          }}>
+            {hashtags.map((tag) => (
+              <span key={tag} style={{ 
+                padding: "4px 12px", 
+                backgroundColor: "rgba(0,0,0,0.15)",
+                borderRadius: 6 
+              }}>
+                #{tag.replace(/\s+/g, "")}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Split variant — photo on top half, solid color block with text on bottom half
+// ---------------------------------------------------------------------------
+
+function SplitCard({
+  imageUrl, source, date, headline, description, hashtags, fontVars,
+  onChangeHeadline, onChangeDescription,
+}: InternalProps) {
+  const SPLIT_POINT = 675; // 50% split
+
+  return (
+    <div
+      id="news-post-card"
+      className={fontVars}
+      style={{
+        width: 1080, height: 1350,
+        position: "relative", overflow: "hidden",
+        backgroundColor: "#1E293B", fontFamily: "var(--font-body)",
+      }}
+    >
+      {/* Top half - image */}
+      <img src={imageUrl} alt=""
+        crossOrigin="anonymous"
+        style={{ 
+          position: "absolute", top: 0, left: 0, 
+          width: "100%", height: SPLIT_POINT, objectFit: "cover" 
+        }}
+      />
+
+      {/* Bottom half - solid color with content */}
+      <div style={{
+        position: "absolute", top: SPLIT_POINT, left: 0, right: 0, bottom: 0,
+        backgroundColor: "#1E293B",
+        display: "flex", flexDirection: "column", justifyContent: "center",
+        padding: "48px 64px",
+      }}>
+        {/* Source / date */}
+        <div style={{ 
+          display: "flex", alignItems: "center", gap: 12,
+          fontFamily: "var(--font-mono)", fontSize: 22, letterSpacing: "0.08em",
+          color: "#10B981", textTransform: "uppercase", marginBottom: 32
+        }}>
+          <span style={{ 
+            width: 10, height: 10, borderRadius: "50%", 
+            backgroundColor: "#10B981", display: "inline-block",
+            boxShadow: "0 0 0 3px rgba(16,185,129,0.2)"
+          }} />
+          {source} · {date}
+        </div>
+
+        {/* Headline — editable */}
+        <EditableField
+          as="h1"
+          value={headline}
+          onChange={onChangeHeadline}
+          singleLine
+          editHintColor="rgba(248,250,252,0.15)"
+          style={{ 
+            margin: "0 0 28px 0", fontFamily: "var(--font-display)", 
+            fontWeight: 800, fontSize: 72, lineHeight: 1.0, 
+            letterSpacing: "-0.01em", color: "#F8FAFC", 
+            textTransform: "uppercase" 
+          }}
+        />
+
+        {/* Description — editable */}
+        <EditableField
+          as="p"
+          value={description}
+          onChange={onChangeDescription}
+          editHintColor="rgba(148,163,184,0.2)"
+          style={{ 
+            margin: "0 0 32px 0", fontFamily: "var(--font-body)", 
+            fontWeight: 400, fontSize: 28, lineHeight: 1.4, 
+            color: "#94A3B8", maxWidth: 860 
+          }}
+        />
+
+        {/* Hashtags */}
+        {hashtags.length > 0 && (
+          <div style={{ 
+            display: "flex", flexWrap: "wrap", gap: 12, 
+            fontFamily: "var(--font-mono)", fontSize: 20, color: "#F8FAFC" 
+          }}>
+            {hashtags.map((tag) => (
+              <span key={tag} style={{ 
+                padding: "6px 14px", 
+                border: "1px solid rgba(16,185,129,0.4)",
+                borderRadius: 999 
+              }}>
+                #{tag.replace(/\s+/g, "")}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
