@@ -15,6 +15,7 @@ from app.dependencies.auth import get_current_user
 from app.services.news_research_service import fetch_google_news_light
 from app.services.llm_service import generate_post_copy
 from app.services.social_post_publish_service import publish_photo_to_facebook_page
+from app.services.platform_config import get_platform_config, DEFAULT_PLATFORM, PLATFORM_CONFIG
 
 router = APIRouter(prefix="/api/social-post", tags=["social-post"])
 
@@ -23,10 +24,11 @@ ALLOWED_CONTENT_TYPES = {"image/png"}
 MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
 
 
-# ---------- /generate (unchanged — no DB, no ownership involved) ----------
+# ---------- /generate ----------
 
 class GenerateRequest(BaseModel):
     query: str
+    platform: str = DEFAULT_PLATFORM
 
 
 class GenerateResponse(BaseModel):
@@ -35,6 +37,11 @@ class GenerateResponse(BaseModel):
     story_description: str
     hashtags: list[str]
     news_results: list[dict]
+    platform: str
+    aspect_ratio: str
+    card_width: int
+    card_height: int
+    description_max_chars: int
 
 
 @router.post("/generate", response_model=GenerateResponse)
@@ -43,13 +50,16 @@ def generate_post(payload: GenerateRequest, current_user: User = Depends(get_cur
     if not query:
         raise HTTPException(status_code=400, detail="Query cannot be empty")
 
+    platform = payload.platform if payload.platform in PLATFORM_CONFIG else DEFAULT_PLATFORM
+    config = get_platform_config(platform)
+
     news_results = fetch_google_news_light(query)
 
     if not news_results:
         raise HTTPException(status_code=422, detail="No news found for this query")
 
     try:
-        copy = generate_post_copy(query, news_results)
+        copy = generate_post_copy(query, news_results, platform=platform)
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=f"LLM generation failed: {str(e)}")
 
@@ -58,6 +68,11 @@ def generate_post(payload: GenerateRequest, current_user: User = Depends(get_cur
         description=copy["description"],
         story_description=copy["story_description"],
         hashtags=copy["hashtags"],
+        platform=platform,
+        aspect_ratio=config["aspect_ratio"],
+        card_width=config["width"],
+        card_height=config["height"],
+        description_max_chars=config["description_max_chars"],
         news_results=news_results,
     )
 
@@ -117,29 +132,6 @@ def save_history(
     return entry
 
 
-@router.put("/history/{history_id}", response_model=HistoryResponse)
-def update_history(
-    history_id: int,
-    payload: HistorySaveRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    entry = _get_owned_history_or_404(history_id, current_user, db)
-    
-    # Update fields
-    entry.query = payload.query
-    entry.headline = payload.headline
-    entry.description = payload.description
-    entry.story_description = payload.story_description
-    entry.hashtags = payload.hashtags
-    entry.news_results = payload.news_results
-    entry.settings_snapshot = payload.settings_snapshot
-    
-    db.commit()
-    db.refresh(entry)
-    return entry
-
-
 @router.get("/history", response_model=list[HistoryResponse])
 def list_history(
     current_user: User = Depends(get_current_user),
@@ -173,6 +165,33 @@ def get_history(
     db: Session = Depends(get_db),
 ):
     return _get_owned_history_or_404(history_id, current_user, db)
+
+
+@router.put("/history/{history_id}", response_model=HistoryResponse)
+def update_history(
+    history_id: int,
+    payload: HistorySaveRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Updates an existing draft in place (e.g. resuming an interrupted post,
+    or editing text after regenerating). Does NOT touch media_filename or
+    publish_status — use the /media and /publish endpoints for those.
+    """
+    entry = _get_owned_history_or_404(history_id, current_user, db)
+
+    entry.query = payload.query
+    entry.headline = payload.headline
+    entry.description = payload.description
+    entry.story_description = payload.story_description
+    entry.hashtags = payload.hashtags
+    entry.news_results = payload.news_results
+    entry.settings_snapshot = payload.settings_snapshot
+
+    db.commit()
+    db.refresh(entry)
+    return entry
 
 
 # ---------- History: media upload ----------

@@ -49,6 +49,8 @@ export interface NewsPostCardProps {
   description: string;
   hashtags: string[];
   variant?: TemplateVariant;
+  width?: number;     // Card width in pixels (default: 1080)
+  height?: number;    // Card height in pixels (default: 1350)
   /** When provided the headline becomes contentEditable in the live preview. */
   onChangeHeadline?: (value: string) => void;
   /** When provided the description becomes contentEditable in the live preview. */
@@ -67,12 +69,14 @@ export default function NewsPostCard({
   description,
   hashtags,
   variant = "dark",
+  width = 1080,
+  height = 1350,
   onChangeHeadline,
   onChangeDescription,
 }: NewsPostCardProps) {
   const fontVars = `${barlowCondensed.variable} ${sourceSerif.variable} ${jetbrainsMono.variable}`;
   const editProps = { onChangeHeadline, onChangeDescription };
-  const sharedProps = { imageUrl, source, date, headline, description, hashtags, fontVars, ...editProps };
+  const sharedProps = { imageUrl, source, date, headline, description, hashtags, fontVars, width, height, ...editProps };
 
   switch (variant) {
     case "light":
@@ -172,6 +176,8 @@ interface InternalProps {
   description: string;
   hashtags: string[];
   fontVars: string;
+  width: number;
+  height: number;
   onChangeHeadline?: (v: string) => void;
   onChangeDescription?: (v: string) => void;
 }
@@ -181,7 +187,7 @@ interface InternalProps {
 // ---------------------------------------------------------------------------
 
 function DarkCard({
-  imageUrl, source, date, headline, description, hashtags, fontVars,
+  imageUrl, source, date, headline, description, hashtags, fontVars, width, height,
   onChangeHeadline, onChangeDescription,
 }: InternalProps) {
   return (
@@ -189,7 +195,7 @@ function DarkCard({
       id="news-post-card"
       className={fontVars}
       style={{
-        width: 1080, height: 1350,
+        width, height,
         position: "relative", overflow: "hidden",
         backgroundColor: "#12151C", fontFamily: "var(--font-body)",
       }}

@@ -42,6 +42,11 @@ interface GeneratedData {
   story_description: string;
   hashtags: string[];
   news_results: NewsResult[];
+  platform?: string;
+  aspect_ratio?: string;
+  card_width?: number;
+  card_height?: number;
+  description_max_chars?: number;
 }
 
 interface PlatformResult {
@@ -179,6 +184,17 @@ export default function CreatePostPage() {
   const [publishResult, setPublishResult] = useState<PublishResponse | null>(null);
   // which platforms are selected; starts with just facebook (the only live one)
   const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>(["facebook"]);
+  
+  // Platform for generation (single-select, used for sizing/copy generation)
+  const [generationPlatform, setGenerationPlatform] = useState<string>("facebook");
+  
+  // Platform-specific settings from the generate response
+  const [platformSettings, setPlatformSettings] = useState<{
+    aspect_ratio: string;
+    card_width: number;
+    card_height: number;
+    description_max_chars: number;
+  } | null>(null);
 
   // ---------------------------------------------------------------------------
   // Draft loading on mount
@@ -308,11 +324,12 @@ export default function CreatePostPage() {
     setExportedDataUrl(null);
     setPublishState("idle");
     setSelectedPlatforms(["facebook"]);
+    setPlatformSettings(null);
 
     try {
       // Fire generate and image search in parallel
       const [json] = await Promise.all([
-        apiFetch<GeneratedData>(`${API_BASE}/api/social-post/generate`, { query }, token),
+        apiFetch<GeneratedData>(`${API_BASE}/api/social-post/generate`, { query, platform: generationPlatform }, token),
         // Image search runs alongside; results populate the gallery asynchronously
         (async () => {
           setBgLoading(true);
@@ -344,6 +361,15 @@ export default function CreatePostPage() {
       setData(json);
       setEditedHeadline(json.headline);
       setEditedDescription(json.description);
+      
+      // Store platform-specific settings
+      setPlatformSettings({
+        aspect_ratio: json.aspect_ratio || "4:5",
+        card_width: json.card_width || 1080,
+        card_height: json.card_height || 1350,
+        description_max_chars: json.description_max_chars || 500,
+      });
+      
       // Auto-select the first article for source/date metadata
       const firstArticle = json.news_results?.[0] ?? null;
       setSelectedArticle(firstArticle);
@@ -570,6 +596,24 @@ export default function CreatePostPage() {
 
           {/* Query input */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 mb-6">
+            <SectionLabel>Target Platform</SectionLabel>
+            <div className="flex flex-wrap gap-2 mb-4">
+              {PLATFORMS.filter(p => p.connectEnabled).map((platform) => (
+                <button
+                  key={platform.id}
+                  onClick={() => setGenerationPlatform(platform.id)}
+                  className={`flex items-center gap-2 rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition ${
+                    generationPlatform === platform.id
+                      ? "border-indigo-500 bg-indigo-50 text-indigo-700"
+                      : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                  }`}
+                >
+                  <div style={{ color: platform.color }}>{platform.icon}</div>
+                  {platform.label}
+                </button>
+              ))}
+            </div>
+            
             <SectionLabel>Topic / Query</SectionLabel>
             <div className="flex gap-3">
               <input
@@ -971,9 +1015,9 @@ export default function CreatePostPage() {
                         <div style={{ width: "100%", height: "100%", overflow: "hidden", position: "relative" }}>
                           <div style={{ 
                             transformOrigin: "top left", 
-                            transform: "scale(0.067)", // 1080px → 72px
-                            width: 1080, 
-                            height: 1350, 
+                            transform: "scale(0.067)", // Scale to 72px wide
+                            width: platformSettings?.card_width || 1080, 
+                            height: platformSettings?.card_height || 1350, 
                             pointerEvents: "none" 
                           }}>
                             <NewsPostCard
@@ -984,6 +1028,8 @@ export default function CreatePostPage() {
                               description={editedDescription || data?.description || "Description preview"}
                               hashtags={data?.hashtags ?? []}
                               variant={tpl.id}
+                              width={platformSettings?.card_width || 1080}
+                              height={platformSettings?.card_height || 1350}
                             />
                           </div>
                         </div>
@@ -1010,7 +1056,12 @@ export default function CreatePostPage() {
                   <div
                     style={{ width: "100%", aspectRatio: "4/5", overflow: "hidden", borderRadius: 12 }}
                   >
-                    <div style={{ transformOrigin: "top left", transform: "scale(0.315)", width: 1080, height: 1350 }}>
+                    <div style={{ 
+                      transformOrigin: "top left", 
+                      transform: `scale(${315 / (platformSettings?.card_width || 1080)})`, 
+                      width: platformSettings?.card_width || 1080, 
+                      height: platformSettings?.card_height || 1350 
+                    }}>
                       <NewsPostCard
                         imageUrl={activeImageUrl}
                         source={activeArticle?.source ?? ""}
@@ -1019,6 +1070,8 @@ export default function CreatePostPage() {
                         description={editedDescription}
                         hashtags={data!.hashtags}
                         variant={selectedVariant}
+                        width={platformSettings?.card_width || 1080}
+                        height={platformSettings?.card_height || 1350}
                         onChangeHeadline={(newHeadline) => {
                           setEditedHeadline(newHeadline);
                           markAsChanged();
@@ -1029,6 +1082,15 @@ export default function CreatePostPage() {
                         }}
                       />
                     </div>
+                    
+                    {/* Character counter */}
+                    {platformSettings && (
+                      <div className="mt-3 text-xs text-center">
+                        <span className={editedDescription.length > platformSettings.description_max_chars ? "text-red-600 font-semibold" : "text-slate-500"}>
+                          {editedDescription.length} / {platformSettings.description_max_chars} characters
+                        </span>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div
@@ -1048,7 +1110,9 @@ export default function CreatePostPage() {
                   </div>
                 )}
 
-                <p className="mt-3 text-xs text-center text-slate-400">4:5 · 1080 × 1350 px</p>
+                <p className="mt-3 text-xs text-center text-slate-400">
+                  {platformSettings?.aspect_ratio || "4:5"} · {platformSettings?.card_width || 1080} × {platformSettings?.card_height || 1350} px
+                </p>
               </div>
 
               {isExported && exportedDataUrl && (
@@ -1085,6 +1149,8 @@ export default function CreatePostPage() {
               description={editedDescription}
               hashtags={data!.hashtags}
               variant={selectedVariant}
+              width={platformSettings?.card_width || 1080}
+              height={platformSettings?.card_height || 1350}
             />
           </div>
         </div>
