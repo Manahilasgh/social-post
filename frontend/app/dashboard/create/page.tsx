@@ -1,9 +1,12 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import NewsPostCard, { TEMPLATES, type TemplateVariant } from "@/components/social-post/news-post-template";
 import { exportCardAsPng, uploadCardMedia } from "@/lib/export-post-screenshot";
 import { PLATFORMS } from "@/lib/platforms";
+import { useAuth } from "@/lib/auth-context";
+import { apiFetch, apiGet, API_BASE } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -39,6 +42,11 @@ interface GeneratedData {
   story_description: string;
   hashtags: string[];
   news_results: NewsResult[];
+  platform?: string;
+  aspect_ratio?: string;
+  card_width?: number;
+  card_height?: number;
+  description_max_chars?: number;
 }
 
 interface PlatformResult {
@@ -55,13 +63,28 @@ interface PublishResponse {
   results: PlatformResult[];
 }
 
+interface DraftHistory {
+  id: number;
+  user_id: number;
+  query: string;
+  headline: string | null;
+  description: string | null;
+  story_description: string | null;
+  hashtags: string[];
+  news_results: NewsResult[];
+  settings_snapshot: Record<string, unknown> | null;
+  media_filename: string | null;
+  publish_status: string;
+  published_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 type AsyncState = "idle" | "loading" | "success" | "error";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-const API_BASE = "http://localhost:8000";
 
 /**
  * Wraps an external image URL through our backend proxy so the browser
@@ -74,25 +97,6 @@ function proxyImageUrl(url: string): string {
   if (url.startsWith("blob:") || url.startsWith("data:")) return url;
   if (url.startsWith(API_BASE)) return url;
   return `${API_BASE}/api/images/proxy?url=${encodeURIComponent(url)}`;
-}
-
-async function apiFetch<T>(url: string, body: unknown): Promise<T> {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    let message = res.statusText;
-    try {
-      const err = await res.json();
-      message = err.detail ?? err.message ?? message;
-    } catch {
-      // ignore JSON parse error
-    }
-    throw new Error(`${res.status}: ${message}`);
-  }
-  return res.json() as Promise<T>;
 }
 
 // ---------------------------------------------------------------------------
@@ -138,8 +142,13 @@ function SuccessBadge({ children }: { children: React.ReactNode }) {
 
 export default function CreatePostPage() {
   const captureRef = useRef<HTMLDivElement>(null);
+  const { token } = useAuth();
+  const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [query, setQuery] = useState("");
+  const [isEditingDraft, setIsEditingDraft] = useState(false); // Track if we're editing an existing draft
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false); // Track if draft has unsaved changes
 
   // generate
   const [generateState, setGenerateState] = useState<AsyncState>("idle");
@@ -175,6 +184,122 @@ export default function CreatePostPage() {
   const [publishResult, setPublishResult] = useState<PublishResponse | null>(null);
   // which platforms are selected; starts with just facebook (the only live one)
   const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>(["facebook"]);
+  
+  // Platform for generation (single-select, used for sizing/copy generation)
+  const [generationPlatform, setGenerationPlatform] = useState<string>("facebook");
+  
+  // Platform-specific settings from the generate response
+  const [platformSettings, setPlatformSettings] = useState<{
+    aspect_ratio: string;
+    card_width: number;
+    card_height: number;
+    description_max_chars: number;
+  } | null>(null);
+
+  // ---------------------------------------------------------------------------
+  // Draft loading on mount
+  // ---------------------------------------------------------------------------
+  
+  // Helper to mark content as changed
+  const markAsChanged = () => {
+    if (isEditingDraft) setHasUnsavedChanges(true);
+  };
+  
+  useEffect(() => {
+    const draftId = searchParams.get("draft");
+    if (!draftId) {
+      // No draft ID - ensure we're in "create new" mode
+      setIsEditingDraft(false);
+      setHasUnsavedChanges(false);
+      setHistoryId(null);
+      return;
+    }
+    
+    if (!token) return;
+
+    const loadDraft = async () => {
+      try {
+        const draft = await apiGet<DraftHistory>(`${API_BASE}/api/social-post/history/${draftId}`, token);
+        
+        // Pre-fill all the state
+        setQuery(draft.query || "");
+        setData({
+          headline: draft.headline || "",
+          description: draft.description || "",
+          story_description: draft.story_description || "",
+          hashtags: draft.hashtags || [],
+          news_results: draft.news_results || [],
+        });
+        setEditedHeadline(draft.headline || "");
+        setEditedDescription(draft.description || "");
+        setHistoryId(draft.id);
+        setIsEditingDraft(true);
+        setHasUnsavedChanges(false); // No unsaved changes when just loaded
+        setSaveState("success"); // Mark as already saved
+        
+        // Auto-select the first article for source/date metadata
+        const firstArticle = draft.news_results?.[0] ?? null;
+        setSelectedArticle(firstArticle);
+        
+        // If there's an existing media file, show it
+        if (draft.media_filename) {
+          setExportState("success");
+          const mediaUrl = `${API_BASE}/uploads/social/${draft.media_filename}`;
+          setExportedDataUrl(mediaUrl);
+        }
+        
+        // Set up the background image gallery - combining article thumbnails + search results
+        if (draft.news_results?.length > 0) {
+          const articleBgImages = draft.news_results
+            .filter((a: NewsResult) => a.thumbnail)
+            .map((a: NewsResult) => ({
+              thumbnail: proxyImageUrl(a.thumbnail),
+              original: proxyImageUrl(a.thumbnail),
+              title: a.title,
+              source: a.source,
+            }));
+          setBgImages(articleBgImages);
+          
+          // Auto-select the first image if no media file exists
+          if (!draft.media_filename && articleBgImages[0]) {
+            setSelectedImageUrl(articleBgImages[0].original);
+          }
+        }
+        
+        // Also load fresh image search results
+        if (draft.query) {
+          setBgLoading(true);
+          try {
+            const res = await fetch(
+              `${API_BASE}/api/images/search?query=${encodeURIComponent(draft.query)}`,
+              token ? { headers: { Authorization: `Bearer ${token}` } } : {}
+            );
+            if (res.ok) {
+              const imgs: ImageResult[] = await res.json();
+              const valid: BgImage[] = imgs
+                .filter((i) => i.original && i.thumbnail)
+                .map((i) => ({
+                  thumbnail: proxyImageUrl(i.thumbnail!),
+                  original: proxyImageUrl(i.original!),
+                  title: i.title ?? "",
+                  source: i.source ?? "",
+                }));
+              setBgImages(prev => [...prev, ...valid]); // Append search results to articles
+            }
+          } finally {
+            setBgLoading(false);
+          }
+        }
+        
+        setGenerateState("success");
+      } catch (err) {
+        console.error("Failed to load draft:", err);
+        // Don't show error in UI, just fall back to normal create flow
+      }
+    };
+
+    loadDraft();
+  }, [searchParams, token]);
 
   // ---------------------------------------------------------------------------
   // Step 1 — Generate
@@ -193,20 +318,26 @@ export default function CreatePostPage() {
     setSaveState("idle");
     setSaveError(null);
     setHistoryId(null);
+    setIsEditingDraft(false); // Reset to "create new" mode when generating fresh content
+    setHasUnsavedChanges(false); // Reset unsaved changes
     setExportState("idle");
     setExportedDataUrl(null);
     setPublishState("idle");
     setSelectedPlatforms(["facebook"]);
+    setPlatformSettings(null);
 
     try {
       // Fire generate and image search in parallel
       const [json] = await Promise.all([
-        apiFetch<GeneratedData>(`${API_BASE}/api/social-post/generate`, { query }),
+        apiFetch<GeneratedData>(`${API_BASE}/api/social-post/generate`, { query, platform: generationPlatform }, token),
         // Image search runs alongside; results populate the gallery asynchronously
         (async () => {
           setBgLoading(true);
           try {
-            const res = await fetch(`${API_BASE}/api/images/search?query=${encodeURIComponent(query)}`);
+            const res = await fetch(
+              `${API_BASE}/api/images/search?query=${encodeURIComponent(query)}`,
+              token ? { headers: { Authorization: `Bearer ${token}` } } : {}
+            );
             if (res.ok) {
               const imgs: ImageResult[] = await res.json();
               const valid: BgImage[] = imgs
@@ -218,6 +349,8 @@ export default function CreatePostPage() {
                   source: i.source ?? "",
                 }));
               setBgImages(valid);
+            } else if (res.status === 401) {
+              router.replace("/login");
             }
           } finally {
             setBgLoading(false);
@@ -228,6 +361,15 @@ export default function CreatePostPage() {
       setData(json);
       setEditedHeadline(json.headline);
       setEditedDescription(json.description);
+      
+      // Store platform-specific settings
+      setPlatformSettings({
+        aspect_ratio: json.aspect_ratio || "4:5",
+        card_width: json.card_width || 1080,
+        card_height: json.card_height || 1350,
+        description_max_chars: json.description_max_chars || 500,
+      });
+      
       // Auto-select the first article for source/date metadata
       const firstArticle = json.news_results?.[0] ?? null;
       setSelectedArticle(firstArticle);
@@ -248,19 +390,39 @@ export default function CreatePostPage() {
     setSaveError(null);
 
     try {
-      const saved = await apiFetch<{ id: number }>(
-        `${API_BASE}/api/social-post/history`,
-        {
-          user_id: 1,
-          query,
-          headline: editedHeadline,
-          description: editedDescription,
-          story_description: data.story_description,
-          hashtags: data.hashtags,
-          news_results: data.news_results,
-        }
-      );
-      setHistoryId(saved.id);
+      if (isEditingDraft && historyId) {
+        // Update existing draft
+        await apiFetch(
+          `${API_BASE}/api/social-post/history/${historyId}`,
+          {
+            query,
+            headline: editedHeadline,
+            description: editedDescription,
+            story_description: data.story_description,
+            hashtags: data.hashtags,
+            news_results: data.news_results,
+          },
+          token,
+          "PUT"
+        );
+      } else {
+        // Create new draft
+        const saved = await apiFetch<{ id: number }>(
+          `${API_BASE}/api/social-post/history`,
+          {
+            query,
+            headline: editedHeadline,
+            description: editedDescription,
+            story_description: data.story_description,
+            hashtags: data.hashtags,
+            news_results: data.news_results,
+          },
+          token
+        );
+        setHistoryId(saved.id);
+        setIsEditingDraft(true);
+      }
+      setHasUnsavedChanges(false); // Clear unsaved changes flag after successful save
       setSaveState("success");
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Unknown error");
@@ -282,7 +444,7 @@ export default function CreatePostPage() {
       const file = await exportCardAsPng(captureRef.current, `post-${historyId}.png`);
       const localUrl = URL.createObjectURL(file);
       setExportedDataUrl(localUrl);
-      await uploadCardMedia(historyId, file);
+      await uploadCardMedia(historyId, file, token);
       setExportState("success");
     } catch (err) {
       setExportError(err instanceof Error ? err.message : "Unknown error");
@@ -303,7 +465,8 @@ export default function CreatePostPage() {
     try {
       const result = await apiFetch<PublishResponse>(
         `${API_BASE}/api/social-post/history/${historyId}/publish`,
-        { user_id: 1, platforms: selectedPlatforms }
+        { platforms: selectedPlatforms },
+        token
       );
       setPublishResult(result);
       setPublishState("success");
@@ -311,6 +474,44 @@ export default function CreatePostPage() {
       setPublishError(err instanceof Error ? err.message : "Unknown error");
       setPublishState("error");
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Reset to create new post
+  // ---------------------------------------------------------------------------
+  function handleNewPost() {
+    // Clear URL params and navigate to clean create page
+    router.push("/dashboard/create");
+    
+    // Reset all state to initial values
+    setQuery("");
+    setIsEditingDraft(false);
+    setHasUnsavedChanges(false);
+    
+    setGenerateState("idle");
+    setGenerateError(null);
+    setData(null);
+    setEditedHeadline("");
+    setEditedDescription("");
+    setSelectedArticle(null);
+    setSelectedVariant("dark");
+    
+    setBgImages([]);
+    setBgLoading(false);
+    setSelectedImageUrl(null);
+    
+    setSaveState("idle");
+    setSaveError(null);
+    setHistoryId(null);
+    
+    setExportState("idle");
+    setExportError(null);
+    setExportedDataUrl(null);
+    
+    setPublishState("idle");
+    setPublishError(null);
+    setPublishResult(null);
+    setSelectedPlatforms(["facebook"]);
   }
 
   // ---------------------------------------------------------------------------
@@ -345,7 +546,9 @@ export default function CreatePostPage() {
 
   // The active image URL for the card — selectedImageUrl wins (set by gallery or upload),
   // otherwise fall back to the first image in the combined list
-  const activeImageUrl = selectedImageUrl ?? allBgImages[0]?.original ?? "";
+  // For minimal variant, image isn't displayed so we can use a placeholder
+  const activeImageUrl = selectedImageUrl ?? allBgImages[0]?.original ?? 
+    (selectedVariant === "minimal" ? "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMSIgaGVpZ2h0PSIxIiB2aWV3Qm94PSIwIDAgMSAxIiBmaWxsPSJub25lIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxyZWN0IHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNmZmZmZmYiLz48L3N2Zz4=" : "");
 
   // ---------------------------------------------------------------------------
   // Render
@@ -357,22 +560,69 @@ export default function CreatePostPage() {
 
           {/* Page heading */}
           <div className="mb-8">
-            <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
-              Create a social post
-            </h1>
-            <p className="mt-1 text-sm text-slate-500">
-              Enter a topic and let AI generate a ready-to-publish post card.
-            </p>
+            <div className="flex items-center justify-between">
+              <div>
+                {isEditingDraft && (
+                  <div className="mb-3">
+                    <button
+                      onClick={() => router.push("/dashboard/history")}
+                      className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 transition"
+                    >
+                      <ArrowLeftIcon className="h-4 w-4" />
+                      Back to History
+                    </button>
+                  </div>
+                )}
+                <h1 className="text-2xl font-bold text-slate-900 tracking-tight">
+                  {isEditingDraft ? "Edit draft" : "Create a social post"}
+                </h1>
+                <p className="mt-1 text-sm text-slate-500">
+                  {isEditingDraft 
+                    ? "Update your draft and continue from where you left off."
+                    : "Enter a topic and let AI generate a ready-to-publish post card."}
+                </p>
+              </div>
+              {(hasResults || isEditingDraft) && (
+                <button
+                  onClick={handleNewPost}
+                  className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 shadow-sm hover:bg-slate-50 transition"
+                >
+                  <PlusIcon className="h-4 w-4" />
+                  {publishState === "success" ? "Create Another" : "New Post"}
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Query input */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 mb-6">
+            <SectionLabel>Target Platform</SectionLabel>
+            <div className="flex flex-wrap gap-2 mb-4">
+              {PLATFORMS.filter(p => p.connectEnabled).map((platform) => (
+                <button
+                  key={platform.id}
+                  onClick={() => setGenerationPlatform(platform.id)}
+                  className={`flex items-center gap-2 rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition ${
+                    generationPlatform === platform.id
+                      ? "border-indigo-500 bg-indigo-50 text-indigo-700"
+                      : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
+                  }`}
+                >
+                  <div style={{ color: platform.color }}>{platform.icon}</div>
+                  {platform.label}
+                </button>
+              ))}
+            </div>
+            
             <SectionLabel>Topic / Query</SectionLabel>
             <div className="flex gap-3">
               <input
                 type="text"
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  markAsChanged();
+                }}
                 onKeyDown={(e) => e.key === "Enter" && !anyBusy && handleGenerate()}
                 placeholder="e.g. AI breakthroughs in healthcare this week"
                 disabled={isGenerating}
@@ -396,8 +646,9 @@ export default function CreatePostPage() {
           {/* ---------------------------------------------------------------- */}
           {/* Background image gallery — shown after generation              */}
           {/* Article thumbnails are prepended; image search fills the rest  */}
+          {/* Hidden for minimal variant which doesn't use images            */}
           {/* ---------------------------------------------------------------- */}
-          {hasResults && (
+          {hasResults && selectedVariant !== "minimal" && (
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 mb-6">
               <div className="flex items-center justify-between mb-3">
                 <SectionLabel>Background image</SectionLabel>
@@ -415,46 +666,54 @@ export default function CreatePostPage() {
               </div>
 
               {allBgImages.length > 0 ? (
-                <div className="grid grid-cols-2 gap-2 max-h-80 overflow-y-auto pr-1">
+                <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 max-h-80 overflow-y-auto pr-1">
                   {allBgImages.map((img, i) => {
                     const isSelected = activeImageUrl === img.original;
                     const isArticle = i < articleBgImages.length;
                     return (
                       <button
                         key={`${img.original}-${i}`}
-                        onClick={() => setSelectedImageUrl(img.original)}
-                        className={`relative rounded-xl overflow-hidden border-2 transition focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 ${
+                        onClick={() => {
+                          setSelectedImageUrl(img.original);
+                          markAsChanged();
+                        }}
+                        className={`relative group rounded-lg overflow-hidden border-2 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 hover:scale-105 hover:shadow-lg ${
                           isSelected
                             ? "border-indigo-500 shadow-md"
-                            : "border-transparent hover:border-slate-300"
+                            : "border-slate-200 hover:border-slate-300"
                         }`}
                       >
-                        {/* Thumbnail — square crop */}
-                        <div className="relative aspect-square bg-slate-100">
+                        {/* Thumbnail — compact size */}
+                        <div className="relative aspect-[4/3] bg-slate-100 overflow-hidden" style={{ height: '100px' }}>
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
                             src={img.thumbnail}
                             alt={img.title}
-                            className="w-full h-full object-cover"
+                            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-110"
                             loading="lazy"
                           />
-                          {/* "From article" pill for prepended article images */}
+                          
+                          {/* "From article" pill for article images */}
                           {isArticle && (
-                            <span className="absolute top-1.5 left-1.5 rounded-md bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                            <span className="absolute top-1 left-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] font-medium text-white">
                               Article
                             </span>
                           )}
+                          
                           {/* Selected checkmark */}
                           {isSelected && (
-                            <div className="absolute top-1.5 right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-indigo-600 shadow-md">
-                              <CheckIcon className="h-3 w-3 text-white" />
+                            <div className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-indigo-600 shadow-md">
+                              <CheckIcon className="h-2.5 w-2.5 text-white" />
                             </div>
                           )}
                         </div>
-                        {/* Caption */}
+                        
+                        {/* Compact caption */}
                         {img.title && (
-                          <div className="px-1.5 py-1 bg-white">
-                            <p className="text-[10px] text-slate-500 truncate">{img.title}</p>
+                          <div className="px-2 py-1.5 bg-white border-t border-slate-100">
+                            <p className="text-[10px] text-slate-500 font-medium truncate leading-tight">
+                              {img.title}
+                            </p>
                           </div>
                         )}
                       </button>
@@ -463,29 +722,32 @@ export default function CreatePostPage() {
                 </div>
               ) : bgLoading ? (
                 /* Skeleton grid while loading */
-                <div className="grid grid-cols-2 gap-2">
-                  {[...Array(6)].map((_, i) => (
-                    <div key={i} className="aspect-square rounded-xl bg-slate-100 animate-pulse" />
+                <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+                  {[...Array(12)].map((_, i) => (
+                    <div key={i} className="aspect-[4/3] rounded-lg bg-slate-100 animate-pulse" style={{ height: '100px' }} />
                   ))}
                 </div>
               ) : (
                 <p className="text-xs text-slate-400 py-3">No images found for this query.</p>
               )}
+            </div>
+          )}
 
-              {/* Source article link */}
-              {selectedArticle?.link && (
-                <div className="mt-3 pt-3 border-t border-slate-100">
-                  <a
-                    href={selectedArticle.link}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 text-xs text-indigo-600 hover:text-indigo-800 transition"
-                  >
-                    Read source article
-                    <ExternalLinkIcon className="h-3 w-3" />
-                  </a>
+          {/* Note for minimal template */}
+          {hasResults && selectedVariant === "minimal" && (
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 mb-6">
+              <SectionLabel>Template Style</SectionLabel>
+              <div className="flex items-center gap-3 text-sm text-slate-600">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100">
+                  <svg className="h-4 w-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                  </svg>
                 </div>
-              )}
+                <div>
+                  <p className="font-medium text-slate-900">Text-focused design</p>
+                  <p className="text-xs text-slate-500">The minimal template uses typography and clean layout instead of background images.</p>
+                </div>
+              </div>
             </div>
           )}
 
@@ -553,13 +815,21 @@ export default function CreatePostPage() {
                     <div className="flex flex-wrap items-center gap-3">
                       <button
                         onClick={handleSaveDraft}
-                        disabled={anyBusy || isSaved}
+                        disabled={anyBusy || (!isEditingDraft && isSaved) || (isEditingDraft && !hasUnsavedChanges)}
                         className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
                       >
-                        {isSaving ? <><Spinner className="text-slate-500" />Saving…</> : "Save draft"}
+                        {isSaving 
+                          ? <><Spinner className="text-slate-500" />{isEditingDraft ? "Updating…" : "Saving…"}</>
+                          : isEditingDraft ? "Update draft" : "Save draft"}
                       </button>
                       {isSaved && historyId && (
-                        <SuccessBadge>Draft saved — id {historyId}</SuccessBadge>
+                        <SuccessBadge>
+                          {isEditingDraft 
+                            ? hasUnsavedChanges 
+                              ? "Changes saved" 
+                              : "No unsaved changes"
+                            : `Draft saved — id ${historyId}`}
+                        </SuccessBadge>
                       )}
                     </div>
                     {saveState === "error" && saveError && (
@@ -582,7 +852,7 @@ export default function CreatePostPage() {
                         >
                           {isExporting
                             ? <><Spinner className="text-slate-500" />Creating image…</>
-                            : "Create image"}
+                            : isExported ? "Update image" : "Create image"}
                         </button>
                         {isExported && <SuccessBadge>Image uploaded</SuccessBadge>}
                       </div>
@@ -660,6 +930,15 @@ export default function CreatePostPage() {
                             {isPublishing ? <><Spinner />Publishing…</> : "Publish"}
                           </button>
                           {publishState === "success" && <SuccessBadge>Published!</SuccessBadge>}
+                          {publishState === "success" && (
+                            <button
+                              onClick={handleNewPost}
+                              className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 transition"
+                            >
+                              <PlusIcon className="h-4 w-4" />
+                              New Post
+                            </button>
+                          )}
                         </div>
                       )}
 
@@ -718,7 +997,7 @@ export default function CreatePostPage() {
                 <SectionLabel>Card preview</SectionLabel>
 
                 {/* Template picker */}
-                <div className="flex gap-2 mb-4">
+                <div className="flex gap-3 mb-4 overflow-x-auto pb-2">
                   {TEMPLATES.map((tpl) => {
                     const isActive = selectedVariant === tpl.id;
                     // Tiny thumbnail previews — same scale trick as the main preview
@@ -727,13 +1006,20 @@ export default function CreatePostPage() {
                         key={tpl.id}
                         onClick={() => setSelectedVariant(tpl.id)}
                         title={tpl.label}
-                        className={`flex-1 rounded-lg overflow-hidden border-2 transition focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 ${
-                          isActive ? "border-indigo-500" : "border-transparent hover:border-slate-300"
+                        className={`relative flex-shrink-0 rounded-xl overflow-hidden border-2 transition focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 ${
+                          isActive ? "border-indigo-500 shadow-lg" : "border-slate-200 hover:border-slate-300"
                         }`}
+                        style={{ width: 72, aspectRatio: "4/5" }}
                       >
-                        {/* Scaled-down card at ~17% (≈300px wide → 51px thumbnail at 4:5) */}
-                        <div style={{ width: "100%", aspectRatio: "4/5", overflow: "hidden", position: "relative" }}>
-                          <div style={{ transformOrigin: "top left", transform: "scale(0.17)", width: 1080, height: 1350, pointerEvents: "none" }}>
+                        {/* Scaled-down card thumbnail */}
+                        <div style={{ width: "100%", height: "100%", overflow: "hidden", position: "relative" }}>
+                          <div style={{ 
+                            transformOrigin: "top left", 
+                            transform: "scale(0.067)", // Scale to 72px wide
+                            width: platformSettings?.card_width || 1080, 
+                            height: platformSettings?.card_height || 1350, 
+                            pointerEvents: "none" 
+                          }}>
                             <NewsPostCard
                               imageUrl={activeImageUrl}
                               source={activeArticle?.source ?? "Source"}
@@ -742,12 +1028,25 @@ export default function CreatePostPage() {
                               description={editedDescription || data?.description || "Description preview"}
                               hashtags={data?.hashtags ?? []}
                               variant={tpl.id}
+                              width={platformSettings?.card_width || 1080}
+                              height={platformSettings?.card_height || 1350}
                             />
                           </div>
                         </div>
-                        <p className={`py-1 text-center text-xs font-medium ${isActive ? "text-indigo-700" : "text-slate-500"}`}>
+                        
+                        {/* Selected checkmark */}
+                        {isActive && (
+                          <div className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-indigo-600 shadow-sm">
+                            <CheckIcon className="h-2.5 w-2.5 text-white" />
+                          </div>
+                        )}
+                        
+                        {/* Label at bottom */}
+                        <div className={`absolute bottom-0 left-0 right-0 px-1 py-1 text-center text-[10px] font-medium leading-tight ${
+                          isActive ? "text-indigo-700 bg-white/95" : "text-slate-600 bg-white/90"
+                        }`}>
                           {tpl.label}
-                        </p>
+                        </div>
                       </button>
                     );
                   })}
@@ -757,7 +1056,12 @@ export default function CreatePostPage() {
                   <div
                     style={{ width: "100%", aspectRatio: "4/5", overflow: "hidden", borderRadius: 12 }}
                   >
-                    <div style={{ transformOrigin: "top left", transform: "scale(0.315)", width: 1080, height: 1350 }}>
+                    <div style={{ 
+                      transformOrigin: "top left", 
+                      transform: `scale(${315 / (platformSettings?.card_width || 1080)})`, 
+                      width: platformSettings?.card_width || 1080, 
+                      height: platformSettings?.card_height || 1350 
+                    }}>
                       <NewsPostCard
                         imageUrl={activeImageUrl}
                         source={activeArticle?.source ?? ""}
@@ -766,10 +1070,27 @@ export default function CreatePostPage() {
                         description={editedDescription}
                         hashtags={data!.hashtags}
                         variant={selectedVariant}
-                        onChangeHeadline={setEditedHeadline}
-                        onChangeDescription={setEditedDescription}
+                        width={platformSettings?.card_width || 1080}
+                        height={platformSettings?.card_height || 1350}
+                        onChangeHeadline={(newHeadline) => {
+                          setEditedHeadline(newHeadline);
+                          markAsChanged();
+                        }}
+                        onChangeDescription={(newDescription) => {
+                          setEditedDescription(newDescription);
+                          markAsChanged();
+                        }}
                       />
                     </div>
+                    
+                    {/* Character counter */}
+                    {platformSettings && (
+                      <div className="mt-3 text-xs text-center">
+                        <span className={editedDescription.length > platformSettings.description_max_chars ? "text-red-600 font-semibold" : "text-slate-500"}>
+                          {editedDescription.length} / {platformSettings.description_max_chars} characters
+                        </span>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div
@@ -789,7 +1110,9 @@ export default function CreatePostPage() {
                   </div>
                 )}
 
-                <p className="mt-3 text-xs text-center text-slate-400">4:5 · 1080 × 1350 px</p>
+                <p className="mt-3 text-xs text-center text-slate-400">
+                  {platformSettings?.aspect_ratio || "4:5"} · {platformSettings?.card_width || 1080} × {platformSettings?.card_height || 1350} px
+                </p>
               </div>
 
               {isExported && exportedDataUrl && (
@@ -826,6 +1149,8 @@ export default function CreatePostPage() {
               description={editedDescription}
               hashtags={data!.hashtags}
               variant={selectedVariant}
+              width={platformSettings?.card_width || 1080}
+              height={platformSettings?.card_height || 1350}
             />
           </div>
         </div>
@@ -917,6 +1242,38 @@ function ExternalLinkIcon({ className = "" }: { className?: string }) {
     >
       <path strokeLinecap="round" strokeLinejoin="round"
         d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+    </svg>
+  );
+}
+
+function ArrowLeftIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={2}
+      aria-hidden="true"
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5 8.25 12l7.5-7.5" />
+    </svg>
+  );
+}
+
+function PlusIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={2}
+      aria-hidden="true"
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
     </svg>
   );
 }

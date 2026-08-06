@@ -5,8 +5,13 @@ from sqlalchemy.orm import Session
 import os
 import requests
 
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
 from app.database import get_db
 from app.models.social_account import SocialAccount
+from app.models.user import User
+from app.dependencies.auth import get_current_user
+from app.services.auth_service import decode_access_token
 
 router = APIRouter(prefix="/api/social-accounts", tags=["social-accounts"])
 
@@ -21,7 +26,7 @@ FB_GRAPH_URL = f"https://graph.facebook.com/{FB_API_VERSION}"
 FB_SCOPES = "pages_show_list,pages_manage_posts,pages_read_engagement"
 
 
-# ---------- List connected accounts (NEW) ----------
+# ---------- List connected accounts ----------
 
 class SocialAccountResponse(BaseModel):
     id: int
@@ -34,26 +39,32 @@ class SocialAccountResponse(BaseModel):
 
 
 @router.get("", response_model=list[SocialAccountResponse])
-def list_social_accounts(user_id: int = Query(...), db: Session = Depends(get_db)):
-    """
-    Returns all connected accounts for a user, across all platforms.
-    Frontend uses this to show 'Connected' vs 'Connect' state per platform.
-    Never returns access_token — this is a public-safe summary only.
-    """
+def list_social_accounts(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     accounts = (
         db.query(SocialAccount)
-        .filter(SocialAccount.user_id == user_id)
+        .filter(SocialAccount.user_id == current_user.id)
         .all()
     )
     return accounts
 
 
-# ---------- Facebook OAuth: connect (unchanged) ----------
+# ---------- Facebook OAuth: connect ----------
+# NOTE: This is opened via a full browser redirect (window.location.href), not fetch,
+# so it cannot carry an Authorization header. Instead, the frontend passes the JWT
+# as a `token` query param, which we decode here the same way get_current_user would.
 
 @router.get("/facebook/connect")
-def facebook_connect(user_id: int = Query(...)):
+def facebook_connect(token: str = Query(...)):
     if not FB_APP_ID:
         raise HTTPException(status_code=500, detail="FACEBOOK_APP_ID is not configured")
+
+    try:
+        user_id = decode_access_token(token)
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
 
     params = {
         "client_id": FB_APP_ID,
@@ -66,7 +77,7 @@ def facebook_connect(user_id: int = Query(...)):
     return RedirectResponse(url=f"{FB_OAUTH_DIALOG_URL}?{query_string}")
 
 
-# ---------- Facebook OAuth: callback (unchanged) ----------
+# ---------- Facebook OAuth: callback (unchanged — state already carries user_id) ----------
 
 @router.get("/facebook/callback")
 def facebook_callback(code: str = Query(...), state: str = Query(...), db: Session = Depends(get_db)):
@@ -86,7 +97,7 @@ def facebook_callback(code: str = Query(...), state: str = Query(...), db: Sessi
         timeout=15,
     )
     if not token_resp.ok:
-        raise HTTPException(status_code=502, detail=f"Facebook token exchange failed: {token_resp.text}")
+        return RedirectResponse(url=f"{FRONTEND_URL}/dashboard/accounts?fb_error=token_exchange")
 
     short_lived_token = token_resp.json().get("access_token")
 
@@ -101,7 +112,7 @@ def facebook_callback(code: str = Query(...), state: str = Query(...), db: Sessi
         timeout=15,
     )
     if not long_lived_resp.ok:
-        raise HTTPException(status_code=502, detail=f"Facebook long-lived token exchange failed: {long_lived_resp.text}")
+        return RedirectResponse(url=f"{FRONTEND_URL}/dashboard/accounts?fb_error=token_upgrade")
 
     long_lived_user_token = long_lived_resp.json().get("access_token")
 
@@ -111,13 +122,12 @@ def facebook_callback(code: str = Query(...), state: str = Query(...), db: Sessi
         timeout=15,
     )
     if not pages_resp.ok:
-        raise HTTPException(status_code=502, detail=f"Failed to fetch Facebook Pages: {pages_resp.text}")
+        return RedirectResponse(url=f"{FRONTEND_URL}/dashboard/accounts?fb_error=pages_fetch")
 
     pages = pages_resp.json().get("data", [])
     if not pages:
-        raise HTTPException(
-            status_code=422,
-            detail="No Facebook Pages found for this account. You need to be an admin of at least one Page.",
+        return RedirectResponse(
+            url=f"{FRONTEND_URL}/dashboard/accounts?fb_error=no_pages"
         )
 
     saved_pages = []
@@ -153,4 +163,8 @@ def facebook_callback(code: str = Query(...), state: str = Query(...), db: Sessi
 
     db.commit()
 
-    return {"connected_pages": saved_pages}
+    page_names = ",".join(p["name"] for p in saved_pages if p.get("name"))
+    encoded_page_names = requests.utils.quote(page_names, safe="")
+    return RedirectResponse(
+        url=f"{FRONTEND_URL}/dashboard/accounts?fb_connected=true&pages={encoded_page_names}"
+    )

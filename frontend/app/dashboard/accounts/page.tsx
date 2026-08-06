@@ -1,7 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { PLATFORMS } from "@/lib/platforms";
+import { useAuth } from "@/lib/auth-context";
+import { apiGet, API_BASE } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -15,13 +18,6 @@ interface ConnectedAccount {
 }
 
 // ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const API_BASE = "http://localhost:8000";
-const USER_ID = 1;
-
-// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
@@ -29,26 +25,68 @@ export default function AccountsPage() {
   const [accounts, setAccounts] = useState<ConnectedAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const { token } = useAuth();
+  const router = useRouter();
+  const searchParams = useSearchParams();
 
   const fetchAccounts = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setSuccessMessage(null); // Clear any existing success messages
     try {
-      const res = await fetch(`${API_BASE}/api/social-accounts?user_id=${USER_ID}`);
-      if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`);
-      const data: ConnectedAccount[] = await res.json();
+      const data = await apiGet<ConnectedAccount[]>(
+        `${API_BASE}/api/social-accounts`,
+        token
+      );
       setAccounts(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [token]);
 
   // Fetch on mount
   useEffect(() => {
     fetchAccounts();
   }, [fetchAccounts]);
+
+  // Handle Facebook OAuth callback parameters on mount
+  useEffect(() => {
+    const fbConnected = searchParams.get("fb_connected");
+    const fbError = searchParams.get("fb_error");
+    const pages = searchParams.get("pages");
+
+    if (fbConnected === "true") {
+      // Show success message
+      const pageNames = pages ? pages.split(",").join(", ") : "your page";
+      setSuccessMessage(`Facebook connected: ${pageNames}`);
+      
+      // Refetch accounts to update the UI
+      fetchAccounts();
+      
+      // Clean the URL
+      const newUrl = new URL(window.location.href);
+      newUrl.searchParams.delete("fb_connected");
+      newUrl.searchParams.delete("pages");
+      router.replace(newUrl.pathname + newUrl.search);
+    } else if (fbError) {
+      // Show error message based on the error type
+      let errorMsg = "Something went wrong connecting Facebook, please try again";
+      if (fbError === "no_pages") {
+        errorMsg = "No Facebook Pages found — you need to be an admin of at least one Page";
+      } else if (["token_exchange", "token_upgrade", "pages_fetch"].includes(fbError)) {
+        errorMsg = "Something went wrong connecting Facebook, please try again";
+      }
+      setError(errorMsg);
+      
+      // Clean the URL
+      const newUrl = new URL(window.location.href);
+      newUrl.searchParams.delete("fb_error");
+      router.replace(newUrl.pathname + newUrl.search);
+    }
+  }, [searchParams, fetchAccounts, router]);
 
   // Refetch when the tab regains focus — catches the return from Facebook OAuth
   useEffect(() => {
@@ -105,6 +143,23 @@ export default function AccountsPage() {
                 className="mt-2 underline underline-offset-2 font-medium"
               >
                 Try again
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Success banner */}
+        {successMessage && (
+          <div className="mb-6 flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm text-emerald-700">
+            <CheckCircleIcon className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+            <div>
+              <p className="font-semibold">Success!</p>
+              <p className="mt-0.5">{successMessage}</p>
+              <button
+                onClick={() => setSuccessMessage(null)}
+                className="mt-2 underline underline-offset-2 font-medium"
+              >
+                Dismiss
               </button>
             </div>
           </div>
@@ -174,20 +229,18 @@ export default function AccountsPage() {
                 {/* Action row */}
                 <div className="mt-auto">
                   {isConnected ? (
-                    /* Reconnect option — allows refreshing the token */
                     <button
                       onClick={() => {
-                        window.location.href = `${API_BASE}/api/social-accounts/${platform.id}/connect?user_id=${USER_ID}`;
+                        window.location.href = `${API_BASE}/api/social-accounts/${platform.id}/connect?token=${token}`;
                       }}
                       className="w-full rounded-xl border border-slate-200 bg-white py-2 text-xs font-medium text-slate-500 hover:bg-slate-50 transition"
                     >
                       Reconnect
                     </button>
                   ) : platform.connectEnabled ? (
-                    /* Live connect button */
                     <button
                       onClick={() => {
-                        window.location.href = `${API_BASE}/api/social-accounts/${platform.id}/connect?user_id=${USER_ID}`;
+                        window.location.href = `${API_BASE}/api/social-accounts/${platform.id}/connect?token=${token}`;
                       }}
                       className="w-full rounded-xl py-2 text-xs font-semibold text-white transition"
                       style={{ backgroundColor: platform.color }}
@@ -251,6 +304,16 @@ function PageIcon({ className = "" }: { className?: string }) {
       viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
       <path strokeLinecap="round" strokeLinejoin="round"
         d="M15 9h3.75M15 12h3.75M15 15h3.75M4.5 19.5h15a2.25 2.25 0 0 0 2.25-2.25V6.75A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25v10.5A2.25 2.25 0 0 0 4.5 19.5Zm6-10.125a1.875 1.875 0 1 1-3.75 0 1.875 1.875 0 0 1 3.75 0Zm1.294 6.336a6.721 6.721 0 0 1-3.17.789 6.721 6.721 0 0 1-3.168-.789 3.376 3.376 0 0 1 6.338 0Z" />
+    </svg>
+  );
+}
+
+function CheckCircleIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none"
+      viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round"
+        d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
     </svg>
   );
 }
