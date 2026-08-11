@@ -26,7 +26,6 @@ export async function exportCardAsPng(
  * Uploads the exported PNG to the backend's media endpoint for a given history entry.
  * Requires the auth token for the Authorization header.
  */
-<<<<<<< HEAD
 export async function uploadCardMedia(historyId: number, file: File, token: string | null): Promise<Response> {
   const formData = new FormData();
   formData.append("file", file);
@@ -48,19 +47,3 @@ export async function uploadCardMedia(historyId: number, file: File, token: stri
 
   return res;
 }
-=======
-export async function uploadCardMedia(
-  historyId: number,
-  file: File,
-  token: string | null
-): Promise<Response> {
-  const formData = new FormData();
-  formData.append("file", file);
-
-  return apiUpload(
-    `${API_BASE}/api/social-post/history/${historyId}/media`,
-    formData,
-    token
-  );
-}
->>>>>>> main

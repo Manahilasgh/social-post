@@ -1,17 +1,11 @@
 "use client";
 
-<<<<<<< HEAD
-import { useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
-=======
 import { useRef, useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
->>>>>>> main
 import NewsPostCard, { TEMPLATES, type TemplateVariant } from "@/components/social-post/news-post-template";
 import { exportCardAsPng, uploadCardMedia } from "@/lib/export-post-screenshot";
 import { PLATFORMS } from "@/lib/platforms";
-import { useAuth } from "@/lib/auth-context";
 import { apiFetch, apiGet, API_BASE } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
@@ -48,20 +42,12 @@ interface GeneratedData {
   story_description: string;
   hashtags: string[];
   news_results: NewsResult[];
-<<<<<<< HEAD
   // Platform-specific fields from the generate endpoint
   platform: string;
   aspect_ratio: string;
   card_width: number;
   card_height: number;
   description_max_chars: number;
-=======
-  platform?: string;
-  aspect_ratio?: string;
-  card_width?: number;
-  card_height?: number;
-  description_max_chars?: number;
->>>>>>> main
 }
 
 interface PlatformResult {
@@ -113,7 +99,6 @@ function proxyImageUrl(url: string): string {
   return `/api/images/proxy?url=${encodeURIComponent(url)}`;
 }
 
-<<<<<<< HEAD
 async function apiFetch<T>(url: string, body: unknown, token: string | null, router: ReturnType<typeof useRouter>): Promise<T> {
   const headers: HeadersInit = { "Content-Type": "application/json" };
   if (token) {
@@ -145,8 +130,6 @@ async function apiFetch<T>(url: string, body: unknown, token: string | null, rou
   return res.json() as Promise<T>;
 }
 
-=======
->>>>>>> main
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
@@ -190,21 +173,11 @@ function SuccessBadge({ children }: { children: React.ReactNode }) {
 
 export default function CreatePostPage() {
   const captureRef = useRef<HTMLDivElement>(null);
-<<<<<<< HEAD
   const router = useRouter();
   const { token } = useAuth();
 
   const [query, setQuery] = useState("");
   const [selectedPlatform, setSelectedPlatform] = useState("facebook");
-=======
-  const { token } = useAuth();
-  const router = useRouter();
-  const searchParams = useSearchParams();
-
-  const [query, setQuery] = useState("");
-  const [isEditingDraft, setIsEditingDraft] = useState(false); // Track if we're editing an existing draft
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false); // Track if draft has unsaved changes
->>>>>>> main
 
   // generate
   const [generateState, setGenerateState] = useState<AsyncState>("idle");
@@ -423,16 +396,11 @@ export default function CreatePostPage() {
     try {
       // Fire generate and image search in parallel
       const [json] = await Promise.all([
-<<<<<<< HEAD
         apiFetch<GeneratedData>(`/api/social-post/generate`, { query, platform: selectedPlatform }, token, router),
-=======
-        apiFetch<GeneratedData>(`${API_BASE}/api/social-post/generate`, { query, platform: generationPlatform }, token),
->>>>>>> main
         // Image search runs alongside; results populate the gallery asynchronously
         (async () => {
           setBgLoading(true);
           try {
-<<<<<<< HEAD
             const headers: HeadersInit = {};
             if (token) {
               headers["Authorization"] = `Bearer ${token}`;
@@ -443,12 +411,6 @@ export default function CreatePostPage() {
               router.push("/login");
               return;
             }
-=======
-            const res = await fetch(
-              `${API_BASE}/api/images/search?query=${encodeURIComponent(query)}`,
-              token ? { headers: { Authorization: `Bearer ${token}` } } : {}
-            );
->>>>>>> main
             if (res.ok) {
               const imgs: ImageResult[] = await res.json();
               const valid: BgImage[] = imgs
@@ -501,7 +463,6 @@ export default function CreatePostPage() {
     setSaveError(null);
 
     try {
-<<<<<<< HEAD
       const saved = await apiFetch<{ id: number }>(
         `/api/social-post/history`,
         {
@@ -517,41 +478,6 @@ export default function CreatePostPage() {
         router
       );
       setHistoryId(saved.id);
-=======
-      if (isEditingDraft && historyId) {
-        // Update existing draft
-        await apiFetch(
-          `${API_BASE}/api/social-post/history/${historyId}`,
-          {
-            query,
-            headline: editedHeadline,
-            description: editedDescription,
-            story_description: data.story_description,
-            hashtags: data.hashtags,
-            news_results: data.news_results,
-          },
-          token,
-          "PUT"
-        );
-      } else {
-        // Create new draft
-        const saved = await apiFetch<{ id: number }>(
-          `${API_BASE}/api/social-post/history`,
-          {
-            query,
-            headline: editedHeadline,
-            description: editedDescription,
-            story_description: data.story_description,
-            hashtags: data.hashtags,
-            news_results: data.news_results,
-          },
-          token
-        );
-        setHistoryId(saved.id);
-        setIsEditingDraft(true);
-      }
-      setHasUnsavedChanges(false); // Clear unsaved changes flag after successful save
->>>>>>> main
       setSaveState("success");
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Unknown error");
@@ -593,16 +519,10 @@ export default function CreatePostPage() {
 
     try {
       const result = await apiFetch<PublishResponse>(
-<<<<<<< HEAD
         `/api/social-post/history/${historyId}/publish`,
         { user_id: 1, platforms: selectedPlatforms },
         token,
         router
-=======
-        `${API_BASE}/api/social-post/history/${historyId}/publish`,
-        { platforms: selectedPlatforms },
-        token
->>>>>>> main
       );
       setPublishResult(result);
       setPublishState("success");
@@ -857,39 +777,22 @@ export default function CreatePostPage() {
               </div>
 
               {allBgImages.length > 0 ? (
-<<<<<<< HEAD
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 max-h-80 overflow-y-auto pr-1">
-=======
-                <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 max-h-80 overflow-y-auto pr-1">
->>>>>>> main
                   {allBgImages.map((img, i) => {
                     const isSelected = activeImageUrl === img.original;
                     const isArticle = i < articleBgImages.length;
                     return (
                       <button
                         key={`${img.original}-${i}`}
-<<<<<<< HEAD
                         onClick={() => setSelectedImageUrl(img.original)}
                         className={`group relative rounded-lg overflow-hidden border-2 transition-all duration-200 hover:scale-105 hover:shadow-lg cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 ${
-=======
-                        onClick={() => {
-                          setSelectedImageUrl(img.original);
-                          markAsChanged();
-                        }}
-                        className={`relative group rounded-lg overflow-hidden border-2 transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 hover:scale-105 hover:shadow-lg ${
->>>>>>> main
                           isSelected
                             ? "border-indigo-500 shadow-md"
                             : "border-slate-200 hover:border-slate-300"
                         }`}
                       >
-<<<<<<< HEAD
                         {/* Thumbnail — fixed height, square-ish */}
                         <div className="relative h-20 sm:h-24 bg-slate-100">
-=======
-                        {/* Thumbnail — compact size */}
-                        <div className="relative aspect-[4/3] bg-slate-100 overflow-hidden" style={{ height: '100px' }}>
->>>>>>> main
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
                             src={img.thumbnail}
@@ -900,59 +803,33 @@ export default function CreatePostPage() {
                           
                           {/* "From article" pill for article images */}
                           {isArticle && (
-<<<<<<< HEAD
                             <span className="absolute top-1 left-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">
-=======
-                            <span className="absolute top-1 left-1 rounded bg-black/70 px-1.5 py-0.5 text-[9px] font-medium text-white">
->>>>>>> main
                               Article
                             </span>
                           )}
                           
                           {/* Selected checkmark */}
                           {isSelected && (
-<<<<<<< HEAD
                             <div className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-indigo-600 shadow-sm">
-=======
-                            <div className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-indigo-600 shadow-md">
->>>>>>> main
                               <CheckIcon className="h-2.5 w-2.5 text-white" />
                             </div>
                           )}
                         </div>
-<<<<<<< HEAD
                         {/* Caption - always show source, truncate */}
                         <div className="px-2 py-1.5 bg-white">
                           <p className="text-xs text-slate-500 truncate" title={img.source || img.title}>
                             {img.source || img.title || "Unknown source"}
                           </p>
                         </div>
-=======
-                        
-                        {/* Compact caption */}
-                        {img.title && (
-                          <div className="px-2 py-1.5 bg-white border-t border-slate-100">
-                            <p className="text-[10px] text-slate-500 font-medium truncate leading-tight">
-                              {img.title}
-                            </p>
-                          </div>
-                        )}
->>>>>>> main
                       </button>
                     );
                   })}
                 </div>
               ) : bgLoading ? (
                 /* Skeleton grid while loading */
-<<<<<<< HEAD
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
                   {[...Array(10)].map((_, i) => (
                     <div key={i} className="h-20 sm:h-24 rounded-lg bg-slate-100 animate-pulse" />
-=======
-                <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-                  {[...Array(12)].map((_, i) => (
-                    <div key={i} className="aspect-[4/3] rounded-lg bg-slate-100 animate-pulse" style={{ height: '100px' }} />
->>>>>>> main
                   ))}
                 </div>
               ) : (

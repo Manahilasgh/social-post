@@ -1,14 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-<<<<<<< HEAD
+import { useAuth } from "@/lib/auth-context";
 import { useRouter } from "next/navigation";
-import { useAuth } from "@/lib/auth-context";
-=======
-import { useRouter, useSearchParams } from "next/navigation";
->>>>>>> main
 import { PLATFORMS } from "@/lib/platforms";
-import { useAuth } from "@/lib/auth-context";
 import { apiGet, API_BASE } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
@@ -34,19 +29,12 @@ export default function AccountsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
-<<<<<<< HEAD
-=======
-  const { token } = useAuth();
-  const router = useRouter();
-  const searchParams = useSearchParams();
->>>>>>> main
 
   const fetchAccounts = useCallback(async () => {
     setLoading(true);
     setError(null);
     setSuccessMessage(null); // Clear any existing success messages
     try {
-<<<<<<< HEAD
       const headers: HeadersInit = {};
       if (token) {
         headers["Authorization"] = `Bearer ${token}`;
@@ -62,56 +50,19 @@ export default function AccountsPage() {
       
       if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`);
       const data: ConnectedAccount[] = await res.json();
-=======
-      const data = await apiGet<ConnectedAccount[]>(
-        `${API_BASE}/api/social-accounts`,
-        token
-      );
->>>>>>> main
       setAccounts(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setLoading(false);
     }
-<<<<<<< HEAD
   }, [token, router]);
-=======
-  }, [token]);
->>>>>>> main
-
-  // Fetch on mount and check for OAuth callback params
-  useEffect(() => {
-    fetchAccounts();
-
-    // Check for Facebook OAuth callback params
-    const searchParams = new URLSearchParams(window.location.search);
-    const fbConnected = searchParams.get("fb_connected");
-    const fbError = searchParams.get("fb_error");
-    const pages = searchParams.get("pages");
-
-    if (fbConnected === "true") {
-      const pageList = pages ? pages.split(",").join(", ") : "your pages";
-      setSuccessMessage(`Successfully connected ${pageList}`);
-      // Clear URL params
-      window.history.replaceState({}, "", window.location.pathname);
-    } else if (fbError) {
-      const errorMessages: Record<string, string> = {
-        token_exchange: "Failed to exchange authorization code",
-        token_upgrade: "Failed to upgrade access token",
-        pages_fetch: "Failed to fetch your Facebook Pages",
-        no_pages: "No Facebook Pages found for your account",
-        missing_params: "Missing required OAuth parameters",
-        invalid_state: "Invalid OAuth state parameter",
-      };
-      setError(errorMessages[fbError] || `Facebook connection failed: ${fbError}`);
-      // Clear URL params
-      window.history.replaceState({}, "", window.location.pathname);
-    }
-  }, [fetchAccounts]);
 
   // Handle Facebook OAuth callback parameters on mount
+  const searchParams = new URLSearchParams(window.location.search);
   useEffect(() => {
+    
+    const searchParams = new URLSearchParams(window.location.search);
     const fbConnected = searchParams.get("fb_connected");
     const fbError = searchParams.get("fb_error");
     const pages = searchParams.get("pages");
@@ -306,11 +257,7 @@ export default function AccountsPage() {
                   {isConnected ? (
                     <button
                       onClick={() => {
-<<<<<<< HEAD
                         window.location.href = `/api/social-accounts/${platform.id}/connect?token=${encodeURIComponent(token || "")}`;
-=======
-                        window.location.href = `${API_BASE}/api/social-accounts/${platform.id}/connect?token=${token}`;
->>>>>>> main
                       }}
                       className="w-full rounded-xl border border-slate-200 bg-white py-2 text-xs font-medium text-slate-500 hover:bg-slate-50 transition"
                     >
@@ -319,11 +266,7 @@ export default function AccountsPage() {
                   ) : platform.connectEnabled ? (
                     <button
                       onClick={() => {
-<<<<<<< HEAD
                         window.location.href = `/api/social-accounts/${platform.id}/connect?token=${encodeURIComponent(token || "")}`;
-=======
-                        window.location.href = `${API_BASE}/api/social-accounts/${platform.id}/connect?token=${token}`;
->>>>>>> main
                       }}
                       className="w-full rounded-xl py-2 text-xs font-semibold text-white transition"
                       style={{ backgroundColor: platform.color }}
