@@ -1,6 +1,8 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth-context";
 import Link from "next/link";
 import NewsPostCard from "@/components/social-post/news-post-template";
 import { exportCardAsPng, uploadCardMedia } from "@/lib/export-post-screenshot";
@@ -44,14 +46,24 @@ type AsyncState = "idle" | "loading" | "success" | "error";
 // Helpers
 // ---------------------------------------------------------------------------
 
-const API_BASE = "http://localhost:8000";
+async function apiFetch<T>(url: string, body: unknown, token: string | null, router: ReturnType<typeof useRouter>): Promise<T> {
+  const headers: HeadersInit = { "Content-Type": "application/json" };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
 
-async function apiFetch<T>(url: string, body: unknown): Promise<T> {
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(body),
   });
+
+  if (res.status === 401) {
+    localStorage.removeItem("auth_token");
+    router.push("/login");
+    throw new Error("Unauthorized - redirecting to login");
+  }
+
   if (!res.ok) {
     let message = res.statusText;
     try {
@@ -109,6 +121,8 @@ function SuccessBadge({ children }: { children: React.ReactNode }) {
 export default function SocialPostPage() {
   // Ref on the full-size off-screen card — what domToPng actually captures
   const captureRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
+  const { token } = useAuth();
 
   const [query, setQuery] = useState("");
 
@@ -151,8 +165,10 @@ export default function SocialPostPage() {
 
     try {
       const json = await apiFetch<GeneratedData>(
-        `${API_BASE}/api/social-post/generate`,
-        { query }
+        `/api/social-post/generate`,
+        { query },
+        token,
+        router
       );
       setData(json);
       setGenerateState("success");
@@ -173,7 +189,7 @@ export default function SocialPostPage() {
 
     try {
       const saved = await apiFetch<{ id: number }>(
-        `${API_BASE}/api/social-post/history`,
+        `/api/social-post/history`,
         {
           user_id: 1,
           query,
@@ -182,7 +198,9 @@ export default function SocialPostPage() {
           story_description: data.story_description,
           hashtags: data.hashtags,
           news_results: data.news_results,
-        }
+        },
+        token,
+        router
       );
       setHistoryId(saved.id);
       setSaveState("success");
@@ -210,7 +228,7 @@ export default function SocialPostPage() {
       const localUrl = URL.createObjectURL(file);
       setExportedDataUrl(localUrl);
 
-      await uploadCardMedia(historyId, file);
+      await uploadCardMedia(historyId, file, token);
       setExportState("success");
     } catch (err) {
       setExportError(err instanceof Error ? err.message : "Unknown error");
@@ -230,8 +248,10 @@ export default function SocialPostPage() {
 
     try {
       const result = await apiFetch<PublishResponse>(
-        `${API_BASE}/api/social-post/history/${historyId}/publish`,
-        { user_id: 1, platforms: ["facebook"] }
+        `/api/social-post/history/${historyId}/publish`,
+        { user_id: 1, platforms: ["facebook"] },
+        token,
+        router
       );
       setPublishResult(result);
       // Consider it a UI-level success as long as we got a response back.

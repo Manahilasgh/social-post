@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth-context";
 import HistoryDetailPanel from "@/components/social-post/history-detail-panel";
 
 // ---------------------------------------------------------------------------
@@ -36,11 +38,9 @@ export type PublishStatus =
 // Helpers
 // ---------------------------------------------------------------------------
 
-const API_BASE = "http://localhost:8000";
-
 /** Construct a full URL for a stored card image. */
 export function mediaUrl(filename: string): string {
-  return `${API_BASE}/uploads/social/${filename}`;
+  return `/uploads/social/${filename}`;
 }
 
 export const STATUS_STYLES: Record<
@@ -95,6 +95,9 @@ function SkeletonCard() {
 // ---------------------------------------------------------------------------
 
 export default function HistoryPage() {
+  const router = useRouter();
+  const { token } = useAuth();
+  
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -104,7 +107,19 @@ export default function HistoryPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/api/social-post/history?user_id=1`);
+      const headers: HeadersInit = {};
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+      
+      const res = await fetch(`/api/social-post/history`, { headers });
+      
+      if (res.status === 401) {
+        localStorage.removeItem("auth_token");
+        router.push("/login");
+        return;
+      }
+      
       if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`);
       const data: HistoryEntry[] = await res.json();
       setEntries(data);
@@ -113,7 +128,7 @@ export default function HistoryPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [token, router]);
 
   useEffect(() => { load(); }, [load]);
 

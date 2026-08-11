@@ -1,6 +1,8 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth-context";
 import NewsPostCard, { TEMPLATES, type TemplateVariant } from "@/components/social-post/news-post-template";
 import { exportCardAsPng, uploadCardMedia } from "@/lib/export-post-screenshot";
 import { PLATFORMS } from "@/lib/platforms";
@@ -39,6 +41,12 @@ interface GeneratedData {
   story_description: string;
   hashtags: string[];
   news_results: NewsResult[];
+  // Platform-specific fields from the generate endpoint
+  platform: string;
+  aspect_ratio: string;
+  card_width: number;
+  card_height: number;
+  description_max_chars: number;
 }
 
 interface PlatformResult {
@@ -61,27 +69,36 @@ type AsyncState = "idle" | "loading" | "success" | "error";
 // Helpers
 // ---------------------------------------------------------------------------
 
-const API_BASE = "http://localhost:8000";
-
 /**
  * Wraps an external image URL through our backend proxy so the browser
  * sees it as same-origin. Required for canvas capture (domToPng) to work
  * without CORS taint. Skip for blob: and data: URLs (user uploads) and
- * for URLs already pointing at our own backend.
+ * for URLs already pointing at our own API.
  */
 function proxyImageUrl(url: string): string {
   if (!url) return url;
-  if (url.startsWith("blob:") || url.startsWith("data:")) return url;
-  if (url.startsWith(API_BASE)) return url;
-  return `${API_BASE}/api/images/proxy?url=${encodeURIComponent(url)}`;
+  if (url.startsWith("blob:") || url.startsWith("data:") || url.startsWith("/api/")) return url;
+  return `/api/images/proxy?url=${encodeURIComponent(url)}`;
 }
 
-async function apiFetch<T>(url: string, body: unknown): Promise<T> {
+async function apiFetch<T>(url: string, body: unknown, token: string | null, router: ReturnType<typeof useRouter>): Promise<T> {
+  const headers: HeadersInit = { "Content-Type": "application/json" };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(body),
   });
+
+  if (res.status === 401) {
+    localStorage.removeItem("auth_token");
+    router.push("/login");
+    throw new Error("Unauthorized - redirecting to login");
+  }
+
   if (!res.ok) {
     let message = res.statusText;
     try {
@@ -138,8 +155,11 @@ function SuccessBadge({ children }: { children: React.ReactNode }) {
 
 export default function CreatePostPage() {
   const captureRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
+  const { token } = useAuth();
 
   const [query, setQuery] = useState("");
+  const [selectedPlatform, setSelectedPlatform] = useState("facebook");
 
   // generate
   const [generateState, setGenerateState] = useState<AsyncState>("idle");
@@ -177,6 +197,44 @@ export default function CreatePostPage() {
   const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>(["facebook"]);
 
   // ---------------------------------------------------------------------------
+  // Reset to initial state for creating a new post
+  // ---------------------------------------------------------------------------
+  function resetForm() {
+    // Reset all form state to initial values
+    setQuery("");
+    setSelectedPlatform("facebook");
+    
+    // Clear generation results
+    setGenerateState("idle");
+    setGenerateError(null);
+    setData(null);
+    setEditedHeadline("");
+    setEditedDescription("");
+    setSelectedArticle(null);
+    
+    // Clear background images
+    setBgImages([]);
+    setBgLoading(false);
+    setSelectedImageUrl(null);
+    
+    // Clear save state
+    setSaveState("idle");
+    setSaveError(null);
+    setHistoryId(null);
+    
+    // Clear export state
+    setExportState("idle");
+    setExportError(null);
+    setExportedDataUrl(null);
+    
+    // Clear publish state
+    setPublishState("idle");
+    setPublishError(null);
+    setPublishResult(null);
+    setSelectedPlatforms(["facebook"]);
+  }
+
+  // ---------------------------------------------------------------------------
   // Step 1 — Generate
   // ---------------------------------------------------------------------------
   async function handleGenerate() {
@@ -201,12 +259,21 @@ export default function CreatePostPage() {
     try {
       // Fire generate and image search in parallel
       const [json] = await Promise.all([
-        apiFetch<GeneratedData>(`${API_BASE}/api/social-post/generate`, { query }),
+        apiFetch<GeneratedData>(`/api/social-post/generate`, { query, platform: selectedPlatform }, token, router),
         // Image search runs alongside; results populate the gallery asynchronously
         (async () => {
           setBgLoading(true);
           try {
-            const res = await fetch(`${API_BASE}/api/images/search?query=${encodeURIComponent(query)}`);
+            const headers: HeadersInit = {};
+            if (token) {
+              headers["Authorization"] = `Bearer ${token}`;
+            }
+            const res = await fetch(`/api/images/search?query=${encodeURIComponent(query)}`, { headers });
+            if (res.status === 401) {
+              localStorage.removeItem("auth_token");
+              router.push("/login");
+              return;
+            }
             if (res.ok) {
               const imgs: ImageResult[] = await res.json();
               const valid: BgImage[] = imgs
@@ -249,7 +316,7 @@ export default function CreatePostPage() {
 
     try {
       const saved = await apiFetch<{ id: number }>(
-        `${API_BASE}/api/social-post/history`,
+        `/api/social-post/history`,
         {
           user_id: 1,
           query,
@@ -258,7 +325,9 @@ export default function CreatePostPage() {
           story_description: data.story_description,
           hashtags: data.hashtags,
           news_results: data.news_results,
-        }
+        },
+        token,
+        router
       );
       setHistoryId(saved.id);
       setSaveState("success");
@@ -282,7 +351,7 @@ export default function CreatePostPage() {
       const file = await exportCardAsPng(captureRef.current, `post-${historyId}.png`);
       const localUrl = URL.createObjectURL(file);
       setExportedDataUrl(localUrl);
-      await uploadCardMedia(historyId, file);
+      await uploadCardMedia(historyId, file, token);
       setExportState("success");
     } catch (err) {
       setExportError(err instanceof Error ? err.message : "Unknown error");
@@ -302,8 +371,10 @@ export default function CreatePostPage() {
 
     try {
       const result = await apiFetch<PublishResponse>(
-        `${API_BASE}/api/social-post/history/${historyId}/publish`,
-        { user_id: 1, platforms: selectedPlatforms }
+        `/api/social-post/history/${historyId}/publish`,
+        { user_id: 1, platforms: selectedPlatforms },
+        token,
+        router
       );
       setPublishResult(result);
       setPublishState("success");
@@ -365,6 +436,61 @@ export default function CreatePostPage() {
             </p>
           </div>
 
+          {/* Platform selector */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 mb-6">
+            <SectionLabel>Platform</SectionLabel>
+            <div className="flex flex-wrap gap-2">
+              {PLATFORMS.map((platform) => {
+                const isSelected = selectedPlatform === platform.id;
+                const canGenerate = platform.id === "facebook"; // Only facebook is implemented for generation
+                return (
+                  <button
+                    key={platform.id}
+                    disabled={!canGenerate}
+                    title={canGenerate ? `Generate post for ${platform.label}` : `${platform.label} — coming soon for generation`}
+                    onClick={() => {
+                      if (!canGenerate) return;
+                      setSelectedPlatform(platform.id);
+                    }}
+                    className={`relative flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-medium transition
+                      ${canGenerate
+                        ? isSelected
+                          ? "border-transparent text-white shadow-sm"
+                          : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+                        : "border-slate-100 bg-slate-50 text-slate-300 cursor-not-allowed"
+                      }`}
+                    style={
+                      canGenerate && isSelected
+                        ? { backgroundColor: platform.color, borderColor: platform.color }
+                        : undefined
+                    }
+                  >
+                    <span
+                      className={
+                        canGenerate
+                          ? isSelected ? "text-white" : "text-slate-500"
+                          : "text-slate-300"
+                      }
+                    >
+                      {platform.icon}
+                    </span>
+                    {platform.label}
+                    {!canGenerate && (
+                      <span className="ml-1 text-slate-300 text-xs">·</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+            {data && selectedPlatform !== data.platform && (
+              <div className="mt-3 p-3 bg-amber-50 rounded-lg border border-amber-200">
+                <p className="text-sm text-amber-700">
+                  Platform changed from {data.platform} to {selectedPlatform}. Character limits may differ if you regenerate.
+                </p>
+              </div>
+            )}
+          </div>
+
           {/* Query input */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 mb-6">
             <SectionLabel>Topic / Query</SectionLabel>
@@ -415,7 +541,7 @@ export default function CreatePostPage() {
               </div>
 
               {allBgImages.length > 0 ? (
-                <div className="grid grid-cols-2 gap-2 max-h-80 overflow-y-auto pr-1">
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 max-h-80 overflow-y-auto pr-1">
                   {allBgImages.map((img, i) => {
                     const isSelected = activeImageUrl === img.original;
                     const isArticle = i < articleBgImages.length;
@@ -423,14 +549,14 @@ export default function CreatePostPage() {
                       <button
                         key={`${img.original}-${i}`}
                         onClick={() => setSelectedImageUrl(img.original)}
-                        className={`relative rounded-xl overflow-hidden border-2 transition focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 ${
+                        className={`group relative rounded-lg overflow-hidden border-2 transition-all duration-200 hover:scale-105 hover:shadow-lg cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 ${
                           isSelected
                             ? "border-indigo-500 shadow-md"
-                            : "border-transparent hover:border-slate-300"
+                            : "border-slate-200 hover:border-slate-300"
                         }`}
                       >
-                        {/* Thumbnail — square crop */}
-                        <div className="relative aspect-square bg-slate-100">
+                        {/* Thumbnail — fixed height, square-ish */}
+                        <div className="relative h-20 sm:h-24 bg-slate-100">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
                             src={img.thumbnail}
@@ -440,32 +566,32 @@ export default function CreatePostPage() {
                           />
                           {/* "From article" pill for prepended article images */}
                           {isArticle && (
-                            <span className="absolute top-1.5 left-1.5 rounded-md bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                            <span className="absolute top-1 left-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">
                               Article
                             </span>
                           )}
                           {/* Selected checkmark */}
                           {isSelected && (
-                            <div className="absolute top-1.5 right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-indigo-600 shadow-md">
-                              <CheckIcon className="h-3 w-3 text-white" />
+                            <div className="absolute top-1 right-1 flex h-4 w-4 items-center justify-center rounded-full bg-indigo-600 shadow-sm">
+                              <CheckIcon className="h-2.5 w-2.5 text-white" />
                             </div>
                           )}
                         </div>
-                        {/* Caption */}
-                        {img.title && (
-                          <div className="px-1.5 py-1 bg-white">
-                            <p className="text-[10px] text-slate-500 truncate">{img.title}</p>
-                          </div>
-                        )}
+                        {/* Caption - always show source, truncate */}
+                        <div className="px-2 py-1.5 bg-white">
+                          <p className="text-xs text-slate-500 truncate" title={img.source || img.title}>
+                            {img.source || img.title || "Unknown source"}
+                          </p>
+                        </div>
                       </button>
                     );
                   })}
                 </div>
               ) : bgLoading ? (
                 /* Skeleton grid while loading */
-                <div className="grid grid-cols-2 gap-2">
-                  {[...Array(6)].map((_, i) => (
-                    <div key={i} className="aspect-square rounded-xl bg-slate-100 animate-pulse" />
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                  {[...Array(10)].map((_, i) => (
+                    <div key={i} className="h-20 sm:h-24 rounded-lg bg-slate-100 animate-pulse" />
                   ))}
                 </div>
               ) : (
@@ -511,7 +637,23 @@ export default function CreatePostPage() {
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
                 <SectionLabel>Description</SectionLabel>
                 {hasResults ? (
-                  <p className="text-sm text-slate-600 leading-relaxed">{editedDescription}</p>
+                  <>
+                    <p className="text-sm text-slate-600 leading-relaxed">{editedDescription}</p>
+                    {data && data.description_max_chars && (
+                      <div className="mt-3 pt-3 border-t border-slate-100">
+                        <p className={`text-xs ${
+                          editedDescription.length > data.description_max_chars 
+                            ? "text-red-600" 
+                            : "text-slate-400"
+                        }`}>
+                          {editedDescription.length} / {data.description_max_chars} characters
+                          {editedDescription.length > data.description_max_chars && (
+                            <span className="ml-1 font-medium">— over limit</span>
+                          )}
+                        </p>
+                      </div>
+                    )}
+                  </>
                 ) : (
                   <div className="space-y-2">
                     <SkeletonBlock className={`h-4 w-full   ${isGenerating ? "" : "opacity-30"}`} />
@@ -669,41 +811,58 @@ export default function CreatePostPage() {
 
                       {/* Per-platform results */}
                       {publishResult && (
-                        <div className="rounded-xl border border-slate-200 overflow-hidden">
-                          {publishResult.results.map((r) => {
-                            const succeeded = r.status === "published" || r.status === "success";
-                            return (
-                              <div
-                                key={r.platform}
-                                className={`flex items-start gap-3 px-4 py-3 text-sm border-b last:border-b-0 ${
-                                  succeeded ? "bg-emerald-50 border-emerald-100" : "bg-red-50 border-red-100"
-                                }`}
-                              >
-                                <span className={`mt-0.5 font-semibold capitalize ${succeeded ? "text-emerald-700" : "text-red-700"}`}>
-                                  {r.platform}
-                                </span>
-                                <div className="flex-1 min-w-0">
-                                  {succeeded
-                                    ? <span className="text-emerald-700 font-medium">Published</span>
-                                    : <span className="text-red-700 font-medium">Failed</span>}
-                                  {r.error && (
-                                    <p className="mt-0.5 text-xs text-red-600 break-words">{r.error}</p>
+                        <div className="space-y-4">
+                          <div className="rounded-xl border border-slate-200 overflow-hidden">
+                            {publishResult.results.map((r) => {
+                              const succeeded = r.status === "published" || r.status === "success";
+                              return (
+                                <div
+                                  key={r.platform}
+                                  className={`flex items-start gap-3 px-4 py-3 text-sm border-b last:border-b-0 ${
+                                    succeeded ? "bg-emerald-50 border-emerald-100" : "bg-red-50 border-red-100"
+                                  }`}
+                                >
+                                  <span className={`mt-0.5 font-semibold capitalize ${succeeded ? "text-emerald-700" : "text-red-700"}`}>
+                                    {r.platform}
+                                  </span>
+                                  <div className="flex-1 min-w-0">
+                                    {succeeded
+                                      ? <span className="text-emerald-700 font-medium">Published</span>
+                                      : <span className="text-red-700 font-medium">Failed</span>}
+                                    {r.error && (
+                                      <p className="mt-0.5 text-xs text-red-600 break-words">{r.error}</p>
+                                    )}
+                                  </div>
+                                  {succeeded && r.external_url && (
+                                    <a
+                                      href={r.external_url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-white border border-emerald-200 px-3 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 transition"
+                                    >
+                                      View post
+                                      <ExternalLinkIcon className="h-3 w-3" />
+                                    </a>
                                   )}
                                 </div>
-                                {succeeded && r.external_url && (
-                                  <a
-                                    href={r.external_url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-white border border-emerald-200 px-3 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 transition"
-                                  >
-                                    View post
-                                    <ExternalLinkIcon className="h-3 w-3" />
-                                  </a>
-                                )}
-                              </div>
-                            );
-                          })}
+                              );
+                            })}
+                          </div>
+
+                          {/* Create New Post button - show after successful publish */}
+                          {(publishResult.publish_status === "published" || publishResult.publish_status === "partial") && (
+                            <div className="flex justify-center pt-2">
+                              <button
+                                onClick={resetForm}
+                                className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-all duration-200"
+                              >
+                                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                                </svg>
+                                Create New Post
+                              </button>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>

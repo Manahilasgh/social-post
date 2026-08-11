@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth-context";
 import { PLATFORMS } from "@/lib/platforms";
 
 // ---------------------------------------------------------------------------
@@ -15,26 +17,35 @@ interface ConnectedAccount {
 }
 
 // ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const API_BASE = "http://localhost:8000";
-const USER_ID = 1;
-
-// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
 export default function AccountsPage() {
+  const router = useRouter();
+  const { token } = useAuth();
+  
   const [accounts, setAccounts] = useState<ConnectedAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const fetchAccounts = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/api/social-accounts?user_id=${USER_ID}`);
+      const headers: HeadersInit = {};
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+      
+      const res = await fetch(`/api/social-accounts`, { headers });
+      
+      if (res.status === 401) {
+        localStorage.removeItem("auth_token");
+        router.push("/login");
+        return;
+      }
+      
       if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`);
       const data: ConnectedAccount[] = await res.json();
       setAccounts(data);
@@ -43,11 +54,36 @@ export default function AccountsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [token, router]);
 
-  // Fetch on mount
+  // Fetch on mount and check for OAuth callback params
   useEffect(() => {
     fetchAccounts();
+
+    // Check for Facebook OAuth callback params
+    const searchParams = new URLSearchParams(window.location.search);
+    const fbConnected = searchParams.get("fb_connected");
+    const fbError = searchParams.get("fb_error");
+    const pages = searchParams.get("pages");
+
+    if (fbConnected === "true") {
+      const pageList = pages ? pages.split(",").join(", ") : "your pages";
+      setSuccessMessage(`Successfully connected ${pageList}`);
+      // Clear URL params
+      window.history.replaceState({}, "", window.location.pathname);
+    } else if (fbError) {
+      const errorMessages: Record<string, string> = {
+        token_exchange: "Failed to exchange authorization code",
+        token_upgrade: "Failed to upgrade access token",
+        pages_fetch: "Failed to fetch your Facebook Pages",
+        no_pages: "No Facebook Pages found for your account",
+        missing_params: "Missing required OAuth parameters",
+        invalid_state: "Invalid OAuth state parameter",
+      };
+      setError(errorMessages[fbError] || `Facebook connection failed: ${fbError}`);
+      // Clear URL params
+      window.history.replaceState({}, "", window.location.pathname);
+    }
   }, [fetchAccounts]);
 
   // Refetch when the tab regains focus — catches the return from Facebook OAuth
@@ -92,6 +128,23 @@ export default function AccountsPage() {
             Refresh
           </button>
         </div>
+
+        {/* Success banner */}
+        {successMessage && (
+          <div className="mb-6 flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm text-emerald-700">
+            <CheckCircleIcon className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+            <div className="flex-1">
+              <p className="font-semibold">Connection successful!</p>
+              <p className="mt-0.5">{successMessage}</p>
+            </div>
+            <button
+              onClick={() => setSuccessMessage(null)}
+              className="text-emerald-400 hover:text-emerald-600 transition"
+            >
+              ✕
+            </button>
+          </div>
+        )}
 
         {/* Error banner */}
         {error && (
@@ -177,7 +230,7 @@ export default function AccountsPage() {
                     /* Reconnect option — allows refreshing the token */
                     <button
                       onClick={() => {
-                        window.location.href = `${API_BASE}/api/social-accounts/${platform.id}/connect?user_id=${USER_ID}`;
+                        window.location.href = `/api/social-accounts/${platform.id}/connect?token=${encodeURIComponent(token || "")}`;
                       }}
                       className="w-full rounded-xl border border-slate-200 bg-white py-2 text-xs font-medium text-slate-500 hover:bg-slate-50 transition"
                     >
@@ -187,7 +240,7 @@ export default function AccountsPage() {
                     /* Live connect button */
                     <button
                       onClick={() => {
-                        window.location.href = `${API_BASE}/api/social-accounts/${platform.id}/connect?user_id=${USER_ID}`;
+                        window.location.href = `/api/social-accounts/${platform.id}/connect?token=${encodeURIComponent(token || "")}`;
                       }}
                       className="w-full rounded-xl py-2 text-xs font-semibold text-white transition"
                       style={{ backgroundColor: platform.color }}
@@ -251,6 +304,16 @@ function PageIcon({ className = "" }: { className?: string }) {
       viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
       <path strokeLinecap="round" strokeLinejoin="round"
         d="M15 9h3.75M15 12h3.75M15 15h3.75M4.5 19.5h15a2.25 2.25 0 0 0 2.25-2.25V6.75A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25v10.5A2.25 2.25 0 0 0 4.5 19.5Zm6-10.125a1.875 1.875 0 1 1-3.75 0 1.875 1.875 0 0 1 3.75 0Zm1.294 6.336a6.721 6.721 0 0 1-3.17.789 6.721 6.721 0 0 1-3.168-.789 3.376 3.376 0 0 1 6.338 0Z" />
+    </svg>
+  );
+}
+
+function CheckCircleIcon({ className = "" }: { className?: string }) {
+  return (
+    <svg className={className} xmlns="http://www.w3.org/2000/svg" fill="none"
+      viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
+      <path strokeLinecap="round" strokeLinejoin="round"
+        d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
     </svg>
   );
 }
