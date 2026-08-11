@@ -89,7 +89,7 @@ export async function POST(
     let caption = captionParts.join("\n\n");
 
     if (entry.hashtags && Array.isArray(entry.hashtags) && entry.hashtags.length > 0) {
-      const hashtagString = entry.hashtags
+      const hashtagString = (entry.hashtags as string[])
         .map((tag: string) => `#${tag.replace(/\s+/g, "")}`)
         .join(" ");
       caption += `\n\n${hashtagString}`;
