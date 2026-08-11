@@ -6,9 +6,6 @@
  * - On any other non-2xx, throws an Error with the backend detail message
  */
 
-const API_BASE = "http://localhost:8000";
-export { API_BASE };
-
 function redirectToLogin() {
   // Use window.location so it works outside of React component trees
   // (e.g. inside the export utility callback)

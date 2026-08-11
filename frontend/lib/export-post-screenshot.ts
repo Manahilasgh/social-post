@@ -1,5 +1,4 @@
 import { domToPng } from "modern-screenshot";
-import { API_BASE, apiUpload } from "@/lib/api";
 
 /**
  * Captures the rendered card DOM node and returns it as a PNG File,

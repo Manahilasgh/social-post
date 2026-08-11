@@ -4,7 +4,6 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { useRouter } from "next/navigation";
 import { PLATFORMS } from "@/lib/platforms";
-import { apiGet, API_BASE } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
 // Types

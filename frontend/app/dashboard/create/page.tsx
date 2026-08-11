@@ -6,7 +6,17 @@ import { useRouter, useSearchParams } from "next/navigation";
 import NewsPostCard, { TEMPLATES, type TemplateVariant } from "@/components/social-post/news-post-template";
 import { exportCardAsPng, uploadCardMedia } from "@/lib/export-post-screenshot";
 import { PLATFORMS } from "@/lib/platforms";
-import { apiFetch, apiGet, API_BASE } from "@/lib/api";
+import { apiFetch, apiGet } from "@/lib/api";
+
+// Icons
+// import { 
+//   ExclamationTriangleIcon as AlertIcon,
+//   CheckIcon,
+//   ArrowLeftIcon,
+//   PlusIcon,
+//   ArrowTopRightOnSquareIcon as ExternalLinkIcon,
+//   ArrowPathIcon as Spinner
+// } from "@heroicons/react/24/outline";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -99,37 +109,6 @@ function proxyImageUrl(url: string): string {
   return `/api/images/proxy?url=${encodeURIComponent(url)}`;
 }
 
-async function apiFetch<T>(url: string, body: unknown, token: string | null, router: ReturnType<typeof useRouter>): Promise<T> {
-  const headers: HeadersInit = { "Content-Type": "application/json" };
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
-
-  if (res.status === 401) {
-    localStorage.removeItem("auth_token");
-    router.push("/login");
-    throw new Error("Unauthorized - redirecting to login");
-  }
-
-  if (!res.ok) {
-    let message = res.statusText;
-    try {
-      const err = await res.json();
-      message = err.detail ?? err.message ?? message;
-    } catch {
-      // ignore JSON parse error
-    }
-    throw new Error(`${res.status}: ${message}`);
-  }
-  return res.json() as Promise<T>;
-}
-
 // ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
@@ -174,6 +153,7 @@ function SuccessBadge({ children }: { children: React.ReactNode }) {
 export default function CreatePostPage() {
   const captureRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { token } = useAuth();
 
   const [query, setQuery] = useState("");
@@ -214,6 +194,10 @@ export default function CreatePostPage() {
   // which platforms are selected; starts with just facebook (the only live one)
   const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>(["facebook"]);
   
+  // Draft editing state
+  const [isEditingDraft, setIsEditingDraft] = useState<boolean>(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState<boolean>(false);
+  
   // Platform for generation (single-select, used for sizing/copy generation)
   const [generationPlatform, setGenerationPlatform] = useState<string>("facebook");
   
@@ -248,7 +232,7 @@ export default function CreatePostPage() {
 
     const loadDraft = async () => {
       try {
-        const draft = await apiGet<DraftHistory>(`${API_BASE}/api/social-post/history/${draftId}`, token);
+        const draft = await apiGet<DraftHistory>(`/api/social-post/history/${draftId}`, token);
         
         // Pre-fill all the state
         setQuery(draft.query || "");
@@ -258,6 +242,12 @@ export default function CreatePostPage() {
           story_description: draft.story_description || "",
           hashtags: draft.hashtags || [],
           news_results: draft.news_results || [],
+          // Platform-specific fields - use defaults when loading from draft
+          platform: "facebook",
+          aspect_ratio: "1:1",
+          card_width: 1200,
+          card_height: 1200,
+          description_max_chars: 280,
         });
         setEditedHeadline(draft.headline || "");
         setEditedDescription(draft.description || "");
@@ -273,7 +263,7 @@ export default function CreatePostPage() {
         // If there's an existing media file, show it
         if (draft.media_filename) {
           setExportState("success");
-          const mediaUrl = `${API_BASE}/uploads/social/${draft.media_filename}`;
+          const mediaUrl = `/uploads/social/${draft.media_filename}`;
           setExportedDataUrl(mediaUrl);
         }
         
@@ -300,7 +290,7 @@ export default function CreatePostPage() {
           setBgLoading(true);
           try {
             const res = await fetch(
-              `${API_BASE}/api/images/search?query=${encodeURIComponent(draft.query)}`,
+              `/api/images/search?query=${encodeURIComponent(draft.query)}`,
               token ? { headers: { Authorization: `Bearer ${token}` } } : {}
             );
             if (res.ok) {
@@ -396,7 +386,7 @@ export default function CreatePostPage() {
     try {
       // Fire generate and image search in parallel
       const [json] = await Promise.all([
-        apiFetch<GeneratedData>(`/api/social-post/generate`, { query, platform: selectedPlatform }, token, router),
+        apiFetch<GeneratedData>(`/api/social-post/generate`, { query, platform: selectedPlatform }, token),
         // Image search runs alongside; results populate the gallery asynchronously
         (async () => {
           setBgLoading(true);
@@ -474,8 +464,7 @@ export default function CreatePostPage() {
           hashtags: data.hashtags,
           news_results: data.news_results,
         },
-        token,
-        router
+        token
       );
       setHistoryId(saved.id);
       setSaveState("success");
@@ -521,8 +510,7 @@ export default function CreatePostPage() {
       const result = await apiFetch<PublishResponse>(
         `/api/social-post/history/${historyId}/publish`,
         { user_id: 1, platforms: selectedPlatforms },
-        token,
-        router
+        token
       );
       setPublishResult(result);
       setPublishState("success");
@@ -744,7 +732,7 @@ export default function CreatePostPage() {
                 disabled={anyBusy || !query.trim()}
                 className="flex items-center gap-2 rounded-xl bg-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
               >
-                {isGenerating ? <><Spinner />Generating…</> : "Generate"}
+                {isGenerating ? <><Spinner className="h-4 w-4 animate-spin" />Generating…</> : "Generate"}
               </button>
             </div>
             {generateState === "error" && generateError && (
@@ -766,7 +754,7 @@ export default function CreatePostPage() {
                 <div className="flex items-center gap-2">
                   {bgLoading && (
                     <span className="flex items-center gap-1.5 text-xs text-slate-400">
-                      <Spinner className="text-slate-400" />
+                      <Spinner className="h-3 w-3 animate-spin text-slate-400" />
                       Loading images…
                     </span>
                   )}
@@ -940,7 +928,7 @@ export default function CreatePostPage() {
                         className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
                       >
                         {isSaving 
-                          ? <><Spinner className="text-slate-500" />{isEditingDraft ? "Updating…" : "Saving…"}</>
+                          ? <><Spinner className="h-4 w-4 animate-spin text-slate-500" />{isEditingDraft ? "Updating…" : "Saving…"}</>
                           : isEditingDraft ? "Update draft" : "Save draft"}
                       </button>
                       {isSaved && historyId && (
@@ -972,7 +960,7 @@ export default function CreatePostPage() {
                           className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
                         >
                           {isExporting
-                            ? <><Spinner className="text-slate-500" />Creating image…</>
+                            ? <><Spinner className="h-4 w-4 animate-spin text-slate-500" />Creating image…</>
                             : isExported ? "Update image" : "Create image"}
                         </button>
                         {isExported && <SuccessBadge>Image uploaded</SuccessBadge>}
@@ -1048,7 +1036,7 @@ export default function CreatePostPage() {
                             disabled={anyBusy || publishState === "success" || selectedPlatforms.length === 0}
                             className="flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
                           >
-                            {isPublishing ? <><Spinner />Publishing…</> : "Publish"}
+                            {isPublishing ? <><Spinner className="h-4 w-4 animate-spin" />Publishing…</> : "Publish"}
                           </button>
                           {publishState === "success" && <SuccessBadge>Published!</SuccessBadge>}
                           {publishState === "success" && (
