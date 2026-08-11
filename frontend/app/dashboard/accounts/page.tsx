@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+<<<<<<< HEAD
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth-context";
+=======
 import { useRouter, useSearchParams } from "next/navigation";
+>>>>>>> main
 import { PLATFORMS } from "@/lib/platforms";
 import { useAuth } from "@/lib/auth-context";
 import { apiGet, API_BASE } from "@/lib/api";
@@ -22,34 +27,87 @@ interface ConnectedAccount {
 // ---------------------------------------------------------------------------
 
 export default function AccountsPage() {
+  const router = useRouter();
+  const { token } = useAuth();
+  
   const [accounts, setAccounts] = useState<ConnectedAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+<<<<<<< HEAD
+=======
   const { token } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
+>>>>>>> main
 
   const fetchAccounts = useCallback(async () => {
     setLoading(true);
     setError(null);
     setSuccessMessage(null); // Clear any existing success messages
     try {
+<<<<<<< HEAD
+      const headers: HeadersInit = {};
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+      
+      const res = await fetch(`/api/social-accounts`, { headers });
+      
+      if (res.status === 401) {
+        localStorage.removeItem("auth_token");
+        router.push("/login");
+        return;
+      }
+      
+      if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`);
+      const data: ConnectedAccount[] = await res.json();
+=======
       const data = await apiGet<ConnectedAccount[]>(
         `${API_BASE}/api/social-accounts`,
         token
       );
+>>>>>>> main
       setAccounts(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setLoading(false);
     }
+<<<<<<< HEAD
+  }, [token, router]);
+=======
   }, [token]);
+>>>>>>> main
 
-  // Fetch on mount
+  // Fetch on mount and check for OAuth callback params
   useEffect(() => {
     fetchAccounts();
+
+    // Check for Facebook OAuth callback params
+    const searchParams = new URLSearchParams(window.location.search);
+    const fbConnected = searchParams.get("fb_connected");
+    const fbError = searchParams.get("fb_error");
+    const pages = searchParams.get("pages");
+
+    if (fbConnected === "true") {
+      const pageList = pages ? pages.split(",").join(", ") : "your pages";
+      setSuccessMessage(`Successfully connected ${pageList}`);
+      // Clear URL params
+      window.history.replaceState({}, "", window.location.pathname);
+    } else if (fbError) {
+      const errorMessages: Record<string, string> = {
+        token_exchange: "Failed to exchange authorization code",
+        token_upgrade: "Failed to upgrade access token",
+        pages_fetch: "Failed to fetch your Facebook Pages",
+        no_pages: "No Facebook Pages found for your account",
+        missing_params: "Missing required OAuth parameters",
+        invalid_state: "Invalid OAuth state parameter",
+      };
+      setError(errorMessages[fbError] || `Facebook connection failed: ${fbError}`);
+      // Clear URL params
+      window.history.replaceState({}, "", window.location.pathname);
+    }
   }, [fetchAccounts]);
 
   // Handle Facebook OAuth callback parameters on mount
@@ -130,6 +188,23 @@ export default function AccountsPage() {
             Refresh
           </button>
         </div>
+
+        {/* Success banner */}
+        {successMessage && (
+          <div className="mb-6 flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm text-emerald-700">
+            <CheckCircleIcon className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+            <div className="flex-1">
+              <p className="font-semibold">Connection successful!</p>
+              <p className="mt-0.5">{successMessage}</p>
+            </div>
+            <button
+              onClick={() => setSuccessMessage(null)}
+              className="text-emerald-400 hover:text-emerald-600 transition"
+            >
+              ✕
+            </button>
+          </div>
+        )}
 
         {/* Error banner */}
         {error && (
@@ -231,7 +306,11 @@ export default function AccountsPage() {
                   {isConnected ? (
                     <button
                       onClick={() => {
+<<<<<<< HEAD
+                        window.location.href = `/api/social-accounts/${platform.id}/connect?token=${encodeURIComponent(token || "")}`;
+=======
                         window.location.href = `${API_BASE}/api/social-accounts/${platform.id}/connect?token=${token}`;
+>>>>>>> main
                       }}
                       className="w-full rounded-xl border border-slate-200 bg-white py-2 text-xs font-medium text-slate-500 hover:bg-slate-50 transition"
                     >
@@ -240,7 +319,11 @@ export default function AccountsPage() {
                   ) : platform.connectEnabled ? (
                     <button
                       onClick={() => {
+<<<<<<< HEAD
+                        window.location.href = `/api/social-accounts/${platform.id}/connect?token=${encodeURIComponent(token || "")}`;
+=======
                         window.location.href = `${API_BASE}/api/social-accounts/${platform.id}/connect?token=${token}`;
+>>>>>>> main
                       }}
                       className="w-full rounded-xl py-2 text-xs font-semibold text-white transition"
                       style={{ backgroundColor: platform.color }}

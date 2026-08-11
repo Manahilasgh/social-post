@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth-context";
 import Link from "next/link";
 import HistoryDetailPanel from "@/components/social-post/history-detail-panel";
 
@@ -37,8 +39,6 @@ export type PublishStatus =
 // Helpers
 // ---------------------------------------------------------------------------
 
-const API_BASE = "http://localhost:8000";
-
 const STATUS_STYLES: Record<PublishStatus, { label: string; classes: string }> = {
   draft:       { label: "Draft",       classes: "bg-slate-100 text-slate-600 ring-slate-200" },
   media_ready: { label: "Media ready", classes: "bg-blue-50 text-blue-700 ring-blue-200" },
@@ -71,11 +71,27 @@ function StatusBadge({ status }: { status: PublishStatus }) {
   );
 }
 
+// Skeleton card for loading state
+function SkeletonCard() {
+  return (
+    <div className="rounded-2xl overflow-hidden border border-slate-200 bg-white animate-pulse">
+      <div className="aspect-[4/5] bg-slate-100" />
+      <div className="p-3 space-y-2">
+        <div className="h-3 w-3/4 rounded bg-slate-100" />
+        <div className="h-3 w-1/2 rounded bg-slate-100" />
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
 export default function HistoryPage() {
+  const router = useRouter();
+  const { token } = useAuth();
+  
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -85,7 +101,19 @@ export default function HistoryPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/api/social-post/history?user_id=1`);
+      const headers: HeadersInit = {};
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+      
+      const res = await fetch(`/api/social-post/history`, { headers });
+      
+      if (res.status === 401) {
+        localStorage.removeItem("auth_token");
+        router.push("/login");
+        return;
+      }
+      
       if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`);
       const data: HistoryEntry[] = await res.json();
       setEntries(data);
@@ -94,7 +122,7 @@ export default function HistoryPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [token, router]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -107,7 +135,11 @@ export default function HistoryPage() {
           <div className="flex items-center justify-between mb-8">
             <div>
               <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Past posts</h1>
-              <p className="mt-1 text-sm text-slate-500">All generated social post drafts and publications.</p>
+              <p className="mt-1 text-sm text-slate-500">
+                {entries.length > 0
+                  ? `${entries.length} post${entries.length === 1 ? "" : "s"}`
+                  : "All generated social post drafts and publications."}
+              </p>
             </div>
             <div className="flex items-center gap-3">
               <button

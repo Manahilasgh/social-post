@@ -1,8 +1,15 @@
 "use client";
 
+<<<<<<< HEAD
+import { usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { ProtectedRoute } from "@/components/auth/protected-route";
+=======
 import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
+>>>>>>> main
 import { useAuth } from "@/lib/auth-context";
 
 // ---------------------------------------------------------------------------
@@ -45,6 +52,19 @@ const NAV_ITEMS: NavItem[] = [
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+<<<<<<< HEAD
+  const { user, logout } = useAuth();
+
+  const handleLogout = () => {
+    logout();
+    router.push("/login");
+  };
+
+  return (
+    <ProtectedRoute>
+      <div className="flex h-screen bg-slate-50">
+      {/* Fixed sidebar */}
+=======
   const { user, isLoading, logout } = useAuth();
 
   // Redirect to login once we know the user is not authenticated
@@ -87,6 +107,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   return (
     <div className="flex h-screen bg-slate-50">
       {/* Sidebar */}
+>>>>>>> main
       <aside className="w-60 flex-shrink-0 border-r border-slate-200 bg-white">
         <div className="flex h-full flex-col">
           {/* Brand */}
@@ -115,6 +136,25 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             })}
           </nav>
 
+<<<<<<< HEAD
+          {/* Footer (user info + logout) */}
+          <div className="border-t border-slate-200 p-4">
+            <div className="flex items-center gap-3 rounded-lg px-3 py-2">
+              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-100 text-xs font-semibold text-indigo-700">
+                {user?.name?.charAt(0).toUpperCase() || "U"}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-slate-700 truncate">{user?.name || "User"}</p>
+                <p className="text-xs text-slate-400 truncate">{user?.email || "user@example.com"}</p>
+              </div>
+            </div>
+            <button
+              onClick={handleLogout}
+              className="mt-2 w-full rounded-lg px-3 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition flex items-center justify-center gap-2"
+            >
+              <LogoutIcon className="h-4 w-4" />
+              Sign out
+=======
           {/* User footer */}
           <div className="border-t border-slate-200 p-3 space-y-1">
             {/* User identity */}
@@ -135,6 +175,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             >
               <LogOutIcon className="h-4 w-4" />
               Log out
+>>>>>>> main
             </button>
           </div>
         </div>
@@ -145,6 +186,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         {children}
       </main>
     </div>
+    </ProtectedRoute>
   );
 }
 
@@ -233,7 +275,11 @@ function SettingsIcon({ className = "" }: { className?: string }) {
   );
 }
 
+<<<<<<< HEAD
+function LogoutIcon({ className = "" }: { className?: string }) {
+=======
 function LogOutIcon({ className = "" }: { className?: string }) {
+>>>>>>> main
   return (
     <svg
       className={className}

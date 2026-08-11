@@ -1,5 +1,8 @@
 "use client";
 
+<<<<<<< HEAD
+import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
+=======
 import {
   createContext,
   useCallback,
@@ -7,31 +10,49 @@ import {
   useEffect,
   useState,
 } from "react";
+>>>>>>> main
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
+<<<<<<< HEAD
+interface User {
+  user_id: number;
+  email: string;
+  name: string;
+=======
 interface AuthUser {
   id: number;
   email: string;
   name: string | null;
+>>>>>>> main
 }
 
 interface AuthState {
   token: string | null;
+<<<<<<< HEAD
+  user: User | null;
+=======
   user: AuthUser | null;
+>>>>>>> main
   isLoading: boolean;
 }
 
 interface AuthContextValue extends AuthState {
+<<<<<<< HEAD
+  login: (token: string, user: User) => void;
+=======
   /** Store token in localStorage and update context. */
   login: (token: string, user: AuthUser) => void;
   /** Clear localStorage token and reset context to logged-out state. */
+>>>>>>> main
   logout: () => void;
 }
 
 // ---------------------------------------------------------------------------
+<<<<<<< HEAD
+=======
 // Constants
 // ---------------------------------------------------------------------------
 
@@ -39,11 +60,74 @@ const API_BASE = "http://localhost:8000";
 const TOKEN_KEY = "auth_token";
 
 // ---------------------------------------------------------------------------
+>>>>>>> main
 // Context
 // ---------------------------------------------------------------------------
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+<<<<<<< HEAD
+const TOKEN_KEY = "auth_token";
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [state, setState] = useState<AuthState>({
+    token: null,
+    user: null,
+    isLoading: true,
+  });
+
+  useEffect(() => {
+    // Check for stored token on mount
+    const storedToken = localStorage.getItem(TOKEN_KEY);
+    if (!storedToken) {
+      setState({ token: null, user: null, isLoading: false });
+      return;
+    }
+
+    // Validate token with backend
+    fetch("/api/auth/me", {
+      headers: {
+        Authorization: `Bearer ${storedToken}`,
+      },
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          // Invalid token, clear it
+          localStorage.removeItem(TOKEN_KEY);
+          setState({ token: null, user: null, isLoading: false });
+          return;
+        }
+        const data = await res.json();
+        setState({
+          token: storedToken,
+          user: {
+            user_id: data.user_id,
+            email: data.email,
+            name: data.name,
+          },
+          isLoading: false,
+        });
+      })
+      .catch(() => {
+        // Network error or invalid response
+        localStorage.removeItem(TOKEN_KEY);
+        setState({ token: null, user: null, isLoading: false });
+      });
+  }, []);
+
+  const login = (token: string, user: User) => {
+    localStorage.setItem(TOKEN_KEY, token);
+    setState({ token, user, isLoading: false });
+  };
+
+  const logout = () => {
+    localStorage.removeItem(TOKEN_KEY);
+    setState({ token: null, user: null, isLoading: false });
+  };
+
+  return (
+    <AuthContext.Provider value={{ ...state, login, logout }}>
+=======
 // ---------------------------------------------------------------------------
 // Provider
 // ---------------------------------------------------------------------------
@@ -113,11 +197,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthContext.Provider value={{ token, user, isLoading, login, logout }}>
+>>>>>>> main
       {children}
     </AuthContext.Provider>
   );
 }
 
+<<<<<<< HEAD
+export function useAuth() {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error("useAuth must be used within an AuthProvider");
+  }
+  return context;
+=======
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
@@ -128,4 +221,5 @@ export function useAuth(): AuthContextValue {
     throw new Error("useAuth must be used inside <AuthProvider>");
   }
   return ctx;
+>>>>>>> main
 }

@@ -1,0 +1,87 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model alembic_version {
+  version_num String @id(map: "alembic_version_pkc") @db.VarChar(32)
+}
+
+model social_accounts {
+  id                  Int       @id @default(autoincrement())
+  user_id             Int
+  platform            String    @db.VarChar
+  platform_account_id String    @db.VarChar
+  display_name        String?   @db.VarChar
+  access_token        String
+  token_expires_at    DateTime? @db.Timestamptz(6)
+  created_at          DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime? @default(now()) @db.Timestamptz(6)
+  users               users     @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([id], map: "ix_social_accounts_id")
+  @@index([user_id], map: "ix_social_accounts_user_id")
+}
+
+model social_post_history {
+  id                       Int                        @id @default(autoincrement())
+  user_id                  Int
+  query                    String                     @db.VarChar
+  headline                 String?
+  description              String?
+  story_description        String?
+  hashtags                 Json?                      @db.Json
+  settings_snapshot        Json?                      @db.Json
+  news_results             Json?                      @db.Json
+  media_filename           String?                    @db.VarChar
+  publish_status           String?                    @db.VarChar
+  published_at             DateTime?                  @db.Timestamptz(6)
+  created_at               DateTime?                  @default(now()) @db.Timestamptz(6)
+  updated_at               DateTime?                  @default(now()) @db.Timestamptz(6)
+  users                    users                      @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  social_post_publications social_post_publications[]
+
+  @@index([id], map: "ix_social_post_history_id")
+  @@index([user_id], map: "ix_social_post_history_user_id")
+}
+
+model social_post_publications {
+  id                  Int                 @id @default(autoincrement())
+  history_id          Int
+  platform            String              @db.VarChar
+  status              String              @db.VarChar
+  external_id         String?             @db.VarChar
+  external_url        String?             @db.VarChar
+  error               String?
+  published_at        DateTime?           @default(now()) @db.Timestamptz(6)
+  social_post_history social_post_history @relation(fields: [history_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([history_id], map: "ix_social_post_publications_history_id")
+  @@index([id], map: "ix_social_post_publications_id")
+}
+
+model social_post_template_prefs {
+  id      Int   @id @default(autoincrement())
+  user_id Int   @unique(map: "ix_social_post_template_prefs_user_id")
+  store   Json? @db.Json
+  users   users @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([id], map: "ix_social_post_template_prefs_id")
+}
+
+model users {
+  id                         Int                         @id @default(autoincrement())
+  email                      String                      @unique(map: "ix_users_email") @db.VarChar
+  name                       String?                     @db.VarChar
+  created_at                 DateTime?                   @default(now()) @db.Timestamptz(6)
+  password_hash              String                      @db.VarChar
+  social_accounts            social_accounts[]
+  social_post_history        social_post_history[]
+  social_post_template_prefs social_post_template_prefs?
+
+  @@index([id], map: "ix_users_id")
+}

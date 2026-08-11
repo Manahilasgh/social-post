@@ -2,6 +2,10 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
+<<<<<<< HEAD
+import { useAuth } from "@/lib/auth-context";
+=======
+>>>>>>> main
 import HistoryDetailPanel from "@/components/social-post/history-detail-panel";
 import { useAuth } from "@/lib/auth-context";
 import { apiGet, API_BASE } from "@/lib/api";
@@ -41,7 +45,7 @@ export type PublishStatus =
 
 /** Construct a full URL for a stored card image. */
 export function mediaUrl(filename: string): string {
-  return `${API_BASE}/uploads/social/${filename}`;
+  return `/uploads/social/${filename}`;
 }
 
 export const STATUS_STYLES: Record<
@@ -96,6 +100,9 @@ function SkeletonCard() {
 // ---------------------------------------------------------------------------
 
 export default function HistoryPage() {
+  const router = useRouter();
+  const { token } = useAuth();
+  
   const [entries, setEntries] = useState<HistoryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -107,17 +114,39 @@ export default function HistoryPage() {
     setLoading(true);
     setError(null);
     try {
+<<<<<<< HEAD
+      const headers: HeadersInit = {};
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+      
+      const res = await fetch(`/api/social-post/history`, { headers });
+      
+      if (res.status === 401) {
+        localStorage.removeItem("auth_token");
+        router.push("/login");
+        return;
+      }
+      
+      if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`);
+      const data: HistoryEntry[] = await res.json();
+=======
       const data = await apiGet<HistoryEntry[]>(
         `${API_BASE}/api/social-post/history`,
         token
       );
+>>>>>>> main
       setEntries(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setLoading(false);
     }
+<<<<<<< HEAD
+  }, [token, router]);
+=======
   }, [token]);
+>>>>>>> main
 
   useEffect(() => { load(); }, [load]);
 

@@ -39,3 +39,47 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# prisma generated files
+/lib/generated/prisma
+
+# User uploads - contains generated media files
+/uploads/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# AI assistant directories (Windsurf, Claude, etc.)
+.windsurf/
+.claude/
+.agents/
+
+# Lock files for AI tools
+skills-lock.json
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# Documentation files that may contain sensitive info or are auto-generated
+AUTH_IMPLEMENTATION.md
+AUTH_USAGE.md
+API_ROUTES.md
+IMAGE_API.md
+SOCIAL_ACCOUNTS_API.md
+AGENTS.md
+CLAUDE.md

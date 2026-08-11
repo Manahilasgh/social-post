@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/lib/auth-context";
 import type { HistoryEntry, PublishStatus } from "@/app/dashboard/history/page";
 import { STATUS_STYLES, mediaUrl } from "@/app/dashboard/history/page";
 import { useAuth } from "@/lib/auth-context";
@@ -61,6 +63,9 @@ function Divider() {
 // ---------------------------------------------------------------------------
 
 export default function HistoryDetailPanel({ id, onClose }: Props) {
+  const router = useRouter();
+  const { token } = useAuth();
+  
   const [entry, setEntry] = useState<HistoryEntry | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -79,10 +84,31 @@ export default function HistoryDetailPanel({ id, onClose }: Props) {
       setLoading(true);
       setError(null);
       try {
+<<<<<<< HEAD
+        const headers: HeadersInit = {};
+        if (token) {
+          headers["Authorization"] = `Bearer ${token}`;
+        }
+        
+        const res = await fetch(`/api/social-post/history/${id}`, { headers });
+        
+        if (res.status === 401) {
+          localStorage.removeItem("auth_token");
+          router.push("/login");
+          return;
+        }
+        
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.detail ?? `${res.status}: ${res.statusText}`);
+        }
+        const data: HistoryEntry = await res.json();
+=======
         const data = await apiGet<HistoryEntry>(
           `${API_BASE}/api/social-post/history/${id}`,
           token
         );
+>>>>>>> main
         if (!cancelled) setEntry(data);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : "Unknown error");
@@ -93,7 +119,11 @@ export default function HistoryDetailPanel({ id, onClose }: Props) {
 
     fetchEntry();
     return () => { cancelled = true; };
+<<<<<<< HEAD
+  }, [id, token, router]);
+=======
   }, [id, token]);
+>>>>>>> main
 
   // Close on Escape
   useEffect(() => {
