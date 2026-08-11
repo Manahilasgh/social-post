@@ -1,15 +1,9 @@
 "use client";
 
-<<<<<<< HEAD
 import { usePathname } from "next/navigation";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { ProtectedRoute } from "@/components/auth/protected-route";
-=======
-import { useEffect } from "react";
-import { usePathname, useRouter } from "next/navigation";
-import Link from "next/link";
->>>>>>> main
 import { useAuth } from "@/lib/auth-context";
 
 // ---------------------------------------------------------------------------
@@ -52,7 +46,6 @@ const NAV_ITEMS: NavItem[] = [
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-<<<<<<< HEAD
   const { user, logout } = useAuth();
 
   const handleLogout = () => {
@@ -64,50 +57,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     <ProtectedRoute>
       <div className="flex h-screen bg-slate-50">
       {/* Fixed sidebar */}
-=======
-  const { user, isLoading, logout } = useAuth();
-
-  // Redirect to login once we know the user is not authenticated
-  useEffect(() => {
-    if (!isLoading && !user) {
-      router.replace("/login");
-    }
-  }, [isLoading, user, router]);
-
-  // Full-screen loading spinner while auth state is being resolved
-  if (isLoading) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-slate-50">
-        <svg
-          className="h-8 w-8 animate-spin text-indigo-600"
-          xmlns="http://www.w3.org/2000/svg"
-          fill="none"
-          viewBox="0 0 24 24"
-          aria-label="Loading"
-        >
-          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-        </svg>
-      </div>
-    );
-  }
-
-  // Still here but no user = redirect in flight, render nothing to avoid flash
-  if (!user) return null;
-
-  // Derive avatar initials from name or email
-  const displayName = user.name || user.email;
-  const initial = displayName.charAt(0).toUpperCase();
-
-  function handleLogout() {
-    logout();
-    router.replace("/login");
-  }
-
-  return (
-    <div className="flex h-screen bg-slate-50">
-      {/* Sidebar */}
->>>>>>> main
       <aside className="w-60 flex-shrink-0 border-r border-slate-200 bg-white">
         <div className="flex h-full flex-col">
           {/* Brand */}
@@ -136,7 +85,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             })}
           </nav>
 
-<<<<<<< HEAD
           {/* Footer (user info + logout) */}
           <div className="border-t border-slate-200 p-4">
             <div className="flex items-center gap-3 rounded-lg px-3 py-2">
@@ -154,28 +102,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             >
               <LogoutIcon className="h-4 w-4" />
               Sign out
-=======
-          {/* User footer */}
-          <div className="border-t border-slate-200 p-3 space-y-1">
-            {/* User identity */}
-            <div className="flex items-center gap-3 rounded-xl px-3 py-2">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-xs font-bold text-indigo-700">
-                {initial}
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-slate-800 truncate">{user.name || "—"}</p>
-                <p className="text-xs text-slate-400 truncate">{user.email}</p>
-              </div>
-            </div>
-
-            {/* Log out */}
-            <button
-              onClick={handleLogout}
-              className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-500 hover:bg-red-50 hover:text-red-600 transition"
-            >
-              <LogOutIcon className="h-4 w-4" />
-              Log out
->>>>>>> main
             </button>
           </div>
         </div>
@@ -275,11 +201,7 @@ function SettingsIcon({ className = "" }: { className?: string }) {
   );
 }
 
-<<<<<<< HEAD
 function LogoutIcon({ className = "" }: { className?: string }) {
-=======
-function LogOutIcon({ className = "" }: { className?: string }) {
->>>>>>> main
   return (
     <svg
       className={className}
