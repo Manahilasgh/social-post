@@ -2,12 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/get-current-user";
 import { handleApiError } from "@/lib/api-error-handler";
 import { prisma } from "@/lib/prisma";
-import { writeFile, mkdir, unlink } from "fs/promises";
-import { existsSync } from "fs";
+import { put, del } from "@vercel/blob";
 import { randomBytes } from "crypto";
-import path from "path";
 
-const UPLOAD_DIR = path.join(process.cwd(), "uploads", "social");
 const ALLOWED_CONTENT_TYPES = ["image/png"];
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
 
@@ -32,8 +29,15 @@ async function getOwnedEntry(id: number, userId: number) {
 }
 
 /**
+ * Helper to check if a URL is a Vercel Blob URL
+ */
+function isBlobUrl(url: string): boolean {
+  return url.includes('blob.vercel-storage.com') || url.startsWith('https://') && url.includes('blob');
+}
+
+/**
  * POST /api/social-post/history/[id]/media
- * Upload a card image for a history entry
+ * Upload a card image for a history entry using Vercel Blob
  */
 export async function POST(
   request: NextRequest,
@@ -75,45 +79,39 @@ export async function POST(
 
     // Validate file size
     const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+    const fileBuffer = Buffer.from(arrayBuffer);
 
-    if (buffer.length > MAX_FILE_SIZE_BYTES) {
+    if (fileBuffer.length > MAX_FILE_SIZE_BYTES) {
       return NextResponse.json(
         { error: "File too large (max 10MB)" },
         { status: 413 }
       );
     }
 
-    // Ensure upload directory exists
-    if (!existsSync(UPLOAD_DIR)) {
-      await mkdir(UPLOAD_DIR, { recursive: true });
-    }
-
     // Generate unique filename using crypto.randomBytes
     const randomHex = randomBytes(16).toString("hex");
-    const filename = `${entryId}_${randomHex}.png`;
-    const filepath = path.join(UPLOAD_DIR, filename);
+    const blobPath = `social/${entryId}_${randomHex}.png`;
 
-    // Write file to disk
-    await writeFile(filepath, buffer);
+    // Upload to Vercel Blob
+    const blob = await put(blobPath, fileBuffer, {
+      access: "public",
+      contentType: "image/png",
+    });
 
-    // Delete old media file if it exists
-    if (entry.media_filename) {
-      const oldPath = path.join(UPLOAD_DIR, entry.media_filename);
-      if (existsSync(oldPath)) {
-        try {
-          await unlink(oldPath);
-        } catch (err) {
-          console.warn(`Failed to delete old media file: ${oldPath}`, err);
-        }
+    // Delete old blob if it exists and is a blob URL
+    if (entry.media_filename && isBlobUrl(entry.media_filename)) {
+      try {
+        await del(entry.media_filename);
+      } catch (err) {
+        console.warn(`Failed to delete old blob: ${entry.media_filename}`, err);
       }
     }
 
-    // Update entry in database
+    // Update entry in database - store the full blob URL
     const updatedEntry = await prisma.social_post_history.update({
       where: { id: entryId },
       data: {
-        media_filename: filename,
+        media_filename: blob.url, // Store the full URL instead of just filename
         publish_status: "media_ready",
       },
     });

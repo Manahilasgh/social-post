@@ -38,9 +38,18 @@ export type PublishStatus =
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Construct a full URL for a stored card image. */
-export function mediaUrl(filename: string): string {
-  return `/uploads/social/${filename}`;
+/** 
+ * Get the media URL - now media_filename stores full URLs from Vercel Blob
+ * For backward compatibility, handle both old filenames and new blob URLs
+ */
+export function mediaUrl(mediaFilename: string): string {
+  // If it's already a full URL (new blob URLs), return as-is
+  if (mediaFilename.startsWith('http')) {
+    return mediaFilename;
+  }
+  
+  // For backward compatibility with old filename-only entries
+  return `/uploads/social/${mediaFilename}`;
 }
 
 export const STATUS_STYLES: Record<

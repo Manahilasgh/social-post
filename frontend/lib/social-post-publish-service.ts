@@ -13,32 +13,58 @@ interface PublishResult {
  * 
  * @param pageId Facebook Page ID
  * @param pageAccessToken Page access token with publishing permissions
- * @param imagePath Absolute path to the image file on disk
+ * @param imageSource Either an absolute file path (legacy) or a URL (new Vercel Blob)
  * @param caption Caption text for the post
  * @returns Promise<PublishResult> - Never throws, always returns success/error info
  */
 export async function publishPhotoToFacebookPage(
   pageId: string,
   pageAccessToken: string,
-  imagePath: string,
+  imageSource: string,
   caption: string
 ): Promise<PublishResult> {
   try {
-    // Check if file exists
-    if (!existsSync(imagePath)) {
-      return {
-        success: false,
-        external_id: null,
-        external_url: null,
-        error: "Image file not found",
-      };
-    }
+    let imageBlob: Blob;
 
-    // Read the image file from disk
-    const imageBuffer = await readFile(imagePath);
-    
-    // Create a Blob from the buffer
-    const imageBlob = new Blob([imageBuffer], { type: "image/png" });
+    // Determine if imageSource is a URL or file path
+    if (imageSource.startsWith('http')) {
+      // It's a URL (Vercel Blob) - fetch the image
+      try {
+        const response = await fetch(imageSource);
+        if (!response.ok) {
+          return {
+            success: false,
+            external_id: null,
+            external_url: null,
+            error: `Failed to fetch image from URL: ${response.status} ${response.statusText}`,
+          };
+        }
+        
+        const imageBuffer = await response.arrayBuffer();
+        imageBlob = new Blob([imageBuffer], { type: "image/png" });
+      } catch (fetchError) {
+        return {
+          success: false,
+          external_id: null,
+          external_url: null,
+          error: `Failed to fetch image from URL: ${fetchError instanceof Error ? fetchError.message : 'Unknown error'}`,
+        };
+      }
+    } else {
+      // It's a file path (legacy) - read from disk
+      if (!existsSync(imageSource)) {
+        return {
+          success: false,
+          external_id: null,
+          external_url: null,
+          error: "Image file not found",
+        };
+      }
+
+      // Read the image file from disk
+      const imageBuffer = await readFile(imageSource);
+      imageBlob = new Blob([imageBuffer], { type: "image/png" });
+    }
 
     // Create FormData for multipart/form-data request
     const formData = new FormData();

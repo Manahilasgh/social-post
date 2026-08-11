@@ -263,7 +263,10 @@ export default function CreatePostPage() {
         // If there's an existing media file, show it
         if (draft.media_filename) {
           setExportState("success");
-          const mediaUrl = `/uploads/social/${draft.media_filename}`;
+          // media_filename now stores full URLs from Vercel Blob
+          const mediaUrl = draft.media_filename.startsWith('http') 
+            ? draft.media_filename 
+            : `/uploads/social/${draft.media_filename}`; // backward compatibility
           setExportedDataUrl(mediaUrl);
         }
         

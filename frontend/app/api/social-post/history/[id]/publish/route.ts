@@ -3,10 +3,6 @@ import { getCurrentUser } from "@/lib/get-current-user";
 import { handleApiError } from "@/lib/api-error-handler";
 import { prisma } from "@/lib/prisma";
 import { publishPhotoToFacebookPage } from "@/lib/social-post-publish-service";
-import path from "path";
-import { existsSync } from "fs";
-
-const UPLOAD_DIR = path.join(process.cwd(), "uploads", "social");
 
 /**
  * Helper to fetch an entry and verify ownership.
@@ -26,6 +22,13 @@ async function getOwnedEntry(id: number, userId: number) {
   }
 
   return entry;
+}
+
+/**
+ * Helper to check if media_filename is a blob URL or old filename
+ */
+function isBlobUrl(url: string): boolean {
+  return url.startsWith('http');
 }
 
 interface PublicationResult {
@@ -67,13 +70,8 @@ export async function POST(
       );
     }
 
-    const imagePath = path.join(UPLOAD_DIR, entry.media_filename);
-    if (!existsSync(imagePath)) {
-      return NextResponse.json(
-        { error: "Media file not found on server" },
-        { status: 500 }
-      );
-    }
+    // media_filename now contains either a Blob URL or legacy filename
+    const imageUrl = entry.media_filename;
 
     // Parse request body
     const body = await request.json();
@@ -135,11 +133,12 @@ export async function POST(
         results.push(result);
         anyFailure = true;
       } else {
-        // Attempt to publish using the real Facebook service
+        // Attempt to publish using the Facebook service
+        // Pass the image URL (now supports both blob URLs and legacy local paths)
         const outcome = await publishPhotoToFacebookPage(
           account.platform_account_id,
           account.access_token,
-          imagePath,
+          imageUrl,
           caption
         );
 
