@@ -109,7 +109,7 @@ export default function AuthForm({ mode }: AuthFormProps) {
 
       // Both /login and /register return the same AuthResponse shape
       login(data.access_token, {
-        id: data.user_id,
+        user_id: data.user_id,
         email: data.email,
         name: data.name ?? null,
       });
