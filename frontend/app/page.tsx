@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
 
 export default function RootPage() {
+<<<<<<< HEAD
   const router = useRouter();
   const { token, isLoading } = useAuth();
 
@@ -56,4 +57,7 @@ export default function RootPage() {
       </div>
     </div>
   );
+=======
+  redirect("/signup");
+>>>>>>> main
 }

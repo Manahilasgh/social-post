@@ -10,9 +10,12 @@ from app.database import get_db
 from app.models.social_post_history import SocialPostHistory
 from app.models.social_post_publication import SocialPostPublication
 from app.models.social_account import SocialAccount
+from app.models.user import User
+from app.dependencies.auth import get_current_user
 from app.services.news_research_service import fetch_google_news_light
 from app.services.llm_service import generate_post_copy
 from app.services.social_post_publish_service import publish_photo_to_facebook_page
+from app.services.platform_config import get_platform_config, DEFAULT_PLATFORM, PLATFORM_CONFIG
 
 router = APIRouter(prefix="/api/social-post", tags=["social-post"])
 
@@ -21,10 +24,11 @@ ALLOWED_CONTENT_TYPES = {"image/png"}
 MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
 
 
-# ---------- /generate (unchanged) ----------
+# ---------- /generate ----------
 
 class GenerateRequest(BaseModel):
     query: str
+    platform: str = DEFAULT_PLATFORM
 
 
 class GenerateResponse(BaseModel):
@@ -33,13 +37,21 @@ class GenerateResponse(BaseModel):
     story_description: str
     hashtags: list[str]
     news_results: list[dict]
+    platform: str
+    aspect_ratio: str
+    card_width: int
+    card_height: int
+    description_max_chars: int
 
 
 @router.post("/generate", response_model=GenerateResponse)
-def generate_post(payload: GenerateRequest):
+def generate_post(payload: GenerateRequest, current_user: User = Depends(get_current_user)):
     query = payload.query.strip()
     if not query:
         raise HTTPException(status_code=400, detail="Query cannot be empty")
+
+    platform = payload.platform if payload.platform in PLATFORM_CONFIG else DEFAULT_PLATFORM
+    config = get_platform_config(platform)
 
     news_results = fetch_google_news_light(query)
 
@@ -47,7 +59,7 @@ def generate_post(payload: GenerateRequest):
         raise HTTPException(status_code=422, detail="No news found for this query")
 
     try:
-        copy = generate_post_copy(query, news_results)
+        copy = generate_post_copy(query, news_results, platform=platform)
     except RuntimeError as e:
         raise HTTPException(status_code=502, detail=f"LLM generation failed: {str(e)}")
 
@@ -56,14 +68,18 @@ def generate_post(payload: GenerateRequest):
         description=copy["description"],
         story_description=copy["story_description"],
         hashtags=copy["hashtags"],
+        platform=platform,
+        aspect_ratio=config["aspect_ratio"],
+        card_width=config["width"],
+        card_height=config["height"],
+        description_max_chars=config["description_max_chars"],
         news_results=news_results,
     )
 
 
-# ---------- History: save / list / fetch (unchanged) ----------
+# ---------- History: save / list / fetch ----------
 
 class HistorySaveRequest(BaseModel):
-    user_id: int
     query: str
     headline: str
     description: str | None = None
@@ -94,9 +110,13 @@ class HistoryResponse(BaseModel):
 
 
 @router.post("/history", response_model=HistoryResponse)
-def save_history(payload: HistorySaveRequest, db: Session = Depends(get_db)):
+def save_history(
+    payload: HistorySaveRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     entry = SocialPostHistory(
-        user_id=payload.user_id,
+        user_id=current_user.id,
         query=payload.query,
         headline=payload.headline,
         description=payload.description,
@@ -113,35 +133,77 @@ def save_history(payload: HistorySaveRequest, db: Session = Depends(get_db)):
 
 
 @router.get("/history", response_model=list[HistoryResponse])
-def list_history(user_id: int, db: Session = Depends(get_db)):
+def list_history(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     entries = (
         db.query(SocialPostHistory)
-        .filter(SocialPostHistory.user_id == user_id)
+        .filter(SocialPostHistory.user_id == current_user.id)
         .order_by(SocialPostHistory.created_at.desc())
         .all()
     )
     return entries
 
 
-@router.get("/history/{history_id}", response_model=HistoryResponse)
-def get_history(history_id: int, db: Session = Depends(get_db)):
+def _get_owned_history_or_404(history_id: int, current_user: User, db: Session) -> SocialPostHistory:
+    """
+    Shared helper: fetches a history entry and ensures it belongs to the
+    current user. Returns 404 (not 403) for entries owned by someone else,
+    so we don't leak which IDs exist.
+    """
     entry = db.query(SocialPostHistory).filter(SocialPostHistory.id == history_id).first()
-    if not entry:
+    if not entry or entry.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="History entry not found")
     return entry
 
 
-# ---------- History: media upload (unchanged) ----------
+@router.get("/history/{history_id}", response_model=HistoryResponse)
+def get_history(
+    history_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return _get_owned_history_or_404(history_id, current_user, db)
+
+
+@router.put("/history/{history_id}", response_model=HistoryResponse)
+def update_history(
+    history_id: int,
+    payload: HistorySaveRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Updates an existing draft in place (e.g. resuming an interrupted post,
+    or editing text after regenerating). Does NOT touch media_filename or
+    publish_status — use the /media and /publish endpoints for those.
+    """
+    entry = _get_owned_history_or_404(history_id, current_user, db)
+
+    entry.query = payload.query
+    entry.headline = payload.headline
+    entry.description = payload.description
+    entry.story_description = payload.story_description
+    entry.hashtags = payload.hashtags
+    entry.news_results = payload.news_results
+    entry.settings_snapshot = payload.settings_snapshot
+
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+
+# ---------- History: media upload ----------
 
 @router.post("/history/{history_id}/media", response_model=HistoryResponse)
 async def upload_media(
     history_id: int,
     file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    entry = db.query(SocialPostHistory).filter(SocialPostHistory.id == history_id).first()
-    if not entry:
-        raise HTTPException(status_code=404, detail="History entry not found")
+    entry = _get_owned_history_or_404(history_id, current_user, db)
 
     if file.content_type not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(status_code=400, detail="Only PNG files are allowed")
@@ -173,7 +235,6 @@ async def upload_media(
 # ---------- Publish ----------
 
 class PublishRequest(BaseModel):
-    user_id: int
     platforms: list[str] = ["facebook"]  # only facebook supported right now
 
 
@@ -192,17 +253,19 @@ class PublishResponse(BaseModel):
 
 
 @router.post("/history/{history_id}/publish", response_model=PublishResponse)
-def publish_post(history_id: int, payload: PublishRequest, db: Session = Depends(get_db)):
-    entry = db.query(SocialPostHistory).filter(SocialPostHistory.id == history_id).first()
-    if not entry:
-        raise HTTPException(status_code=404, detail="History entry not found")
+def publish_post(
+    history_id: int,
+    payload: PublishRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    entry = _get_owned_history_or_404(history_id, current_user, db)
 
     if not entry.media_filename:
         raise HTTPException(status_code=400, detail="No media attached to this post yet — upload an image first")
 
     image_path = os.path.join(UPLOAD_DIR, entry.media_filename)
 
-    # Build the caption: headline + story description, per platform copy convention
     caption_parts = [p for p in [entry.headline, entry.story_description] if p]
     caption = "\n\n".join(caption_parts)
     if entry.hashtags:
@@ -224,7 +287,7 @@ def publish_post(history_id: int, payload: PublishRequest, db: Session = Depends
         account = (
             db.query(SocialAccount)
             .filter(
-                SocialAccount.user_id == payload.user_id,
+                SocialAccount.user_id == current_user.id,
                 SocialAccount.platform == "facebook",
             )
             .first()
@@ -254,7 +317,6 @@ def publish_post(history_id: int, payload: PublishRequest, db: Session = Depends
             any_success = any_success or outcome["success"]
             any_failure = any_failure or not outcome["success"]
 
-        # Record this attempt in social_post_publications regardless of outcome
         db.add(SocialPostPublication(
             history_id=history_id,
             platform=results[-1].platform,
@@ -264,7 +326,6 @@ def publish_post(history_id: int, payload: PublishRequest, db: Session = Depends
             error=results[-1].error,
         ))
 
-    # Finalize history status
     if any_success and not any_failure:
         entry.publish_status = "published"
         entry.published_at = datetime.now(timezone.utc)

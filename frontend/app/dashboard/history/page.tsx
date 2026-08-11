@@ -2,8 +2,13 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
+<<<<<<< HEAD
 import { useAuth } from "@/lib/auth-context";
+=======
+>>>>>>> main
 import HistoryDetailPanel from "@/components/social-post/history-detail-panel";
+import { useAuth } from "@/lib/auth-context";
+import { apiGet, API_BASE } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -102,11 +107,14 @@ export default function HistoryPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const { token } = useAuth();
+  const router = useRouter();
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
+<<<<<<< HEAD
       const headers: HeadersInit = {};
       if (token) {
         headers["Authorization"] = `Bearer ${token}`;
@@ -122,13 +130,23 @@ export default function HistoryPage() {
       
       if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`);
       const data: HistoryEntry[] = await res.json();
+=======
+      const data = await apiGet<HistoryEntry[]>(
+        `${API_BASE}/api/social-post/history`,
+        token
+      );
+>>>>>>> main
       setEntries(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setLoading(false);
     }
+<<<<<<< HEAD
   }, [token, router]);
+=======
+  }, [token]);
+>>>>>>> main
 
   useEffect(() => { load(); }, [load]);
 
@@ -203,7 +221,15 @@ export default function HistoryPage() {
                 return (
                   <button
                     key={entry.id}
-                    onClick={() => setSelectedId(entry.id)}
+                    onClick={() => {
+                      // For drafts, navigate to create-post page for editing
+                      if (entry.publish_status === "draft" || entry.publish_status === "media_ready") {
+                        router.push(`/dashboard/create?draft=${entry.id}`);
+                      } else {
+                        // For published posts, show detail panel
+                        setSelectedId(entry.id);
+                      }
+                    }}
                     className="group rounded-2xl overflow-hidden border-2 border-transparent bg-white shadow-sm hover:border-indigo-400 hover:shadow-md transition focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 text-left"
                   >
                     {/* Thumbnail — 4:5 aspect ratio matching the card */}

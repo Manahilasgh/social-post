@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 "use client";
 
 import { useState } from "react";
@@ -145,4 +146,12 @@ export default function SignupPage() {
       </div>
     </div>
   );
+=======
+import AuthForm from "@/components/auth/auth-form";
+
+export const metadata = { title: "Sign up — Social Post" };
+
+export default function SignupPage() {
+  return <AuthForm mode="signup" />;
+>>>>>>> main
 }
