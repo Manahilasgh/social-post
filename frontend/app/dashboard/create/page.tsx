@@ -196,8 +196,17 @@ export default function CreatePostPage() {
   
   // Draft editing state
   const [isEditingDraft, setIsEditingDraft] = useState<boolean>(false);
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState<boolean>(false);
   
+  // Last saved snapshot for change detection
+  const [lastSavedSnapshot, setLastSavedSnapshot] = useState<{
+    query: string;
+    headline: string;
+    description: string;
+    story_description: string;
+    hashtags: string[];
+    selectedImageUrl: string | null;
+  } | null>(null);
+
   // Platform for generation (single-select, used for sizing/copy generation)
   const [generationPlatform, setGenerationPlatform] = useState<string>("facebook");
   
@@ -213,17 +222,25 @@ export default function CreatePostPage() {
   // Draft loading on mount
   // ---------------------------------------------------------------------------
   
-  // Helper to mark content as changed
-  const markAsChanged = () => {
-    if (isEditingDraft) setHasUnsavedChanges(true);
+  // Derived state: check if current form state differs from last saved snapshot
+  const currentSnapshot = {
+    query,
+    headline: editedHeadline,
+    description: editedDescription,
+    story_description: data?.story_description || "",
+    hashtags: data?.hashtags || [],
+    selectedImageUrl,
   };
   
+  const hasUnsavedChanges = isEditingDraft && lastSavedSnapshot && 
+    JSON.stringify(currentSnapshot) !== JSON.stringify(lastSavedSnapshot);
+
   useEffect(() => {
     const draftId = searchParams.get("draft");
     if (!draftId) {
       // No draft ID - ensure we're in "create new" mode
       setIsEditingDraft(false);
-      setHasUnsavedChanges(false);
+      setLastSavedSnapshot(null);
       setHistoryId(null);
       return;
     }
@@ -253,7 +270,17 @@ export default function CreatePostPage() {
         setEditedDescription(draft.description || "");
         setHistoryId(draft.id);
         setIsEditingDraft(true);
-        setHasUnsavedChanges(false); // No unsaved changes when just loaded
+        
+        // Set the saved snapshot to current loaded state
+        setLastSavedSnapshot({
+          query: draft.query || "",
+          headline: draft.headline || "",
+          description: draft.description || "",
+          story_description: draft.story_description || "",
+          hashtags: draft.hashtags || [],
+          selectedImageUrl: null, // Will be set later if media exists
+        });
+        
         setSaveState("success"); // Mark as already saved
         
         // Auto-select the first article for source/date metadata
@@ -323,6 +350,19 @@ export default function CreatePostPage() {
     loadDraft();
   }, [searchParams, token]);
 
+  // Update snapshot when selectedImageUrl changes for loaded drafts
+  useEffect(() => {
+    if (isEditingDraft && lastSavedSnapshot && selectedImageUrl !== lastSavedSnapshot.selectedImageUrl) {
+      // Only update if this is the initial load (we have a snapshot but selectedImageUrl was null)
+      if (lastSavedSnapshot.selectedImageUrl === null) {
+        setLastSavedSnapshot(prev => prev ? {
+          ...prev,
+          selectedImageUrl
+        } : null);
+      }
+    }
+  }, [selectedImageUrl, isEditingDraft, lastSavedSnapshot]);
+
   // ---------------------------------------------------------------------------
   // Reset to initial state for creating a new post
   // ---------------------------------------------------------------------------
@@ -379,7 +419,7 @@ export default function CreatePostPage() {
     setSaveError(null);
     setHistoryId(null);
     setIsEditingDraft(false); // Reset to "create new" mode when generating fresh content
-    setHasUnsavedChanges(false); // Reset unsaved changes
+    setLastSavedSnapshot(null); // Reset saved snapshot
     setExportState("idle");
     setExportedDataUrl(null);
     setPublishState("idle");
@@ -471,6 +511,16 @@ export default function CreatePostPage() {
       );
       setHistoryId(saved.id);
       setSaveState("success");
+      
+      // Update the saved snapshot to reflect current state
+      setLastSavedSnapshot({
+        query,
+        headline: editedHeadline,
+        description: editedDescription,
+        story_description: data.story_description,
+        hashtags: data.hashtags,
+        selectedImageUrl,
+      });
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Unknown error");
       setSaveState("error");
@@ -533,7 +583,7 @@ export default function CreatePostPage() {
     // Reset all state to initial values
     setQuery("");
     setIsEditingDraft(false);
-    setHasUnsavedChanges(false);
+    setLastSavedSnapshot(null);
     
     setGenerateState("idle");
     setGenerateError(null);
@@ -723,7 +773,6 @@ export default function CreatePostPage() {
                 value={query}
                 onChange={(e) => {
                   setQuery(e.target.value);
-                  markAsChanged();
                 }}
                 onKeyDown={(e) => e.key === "Enter" && !anyBusy && handleGenerate()}
                 placeholder="e.g. AI breakthroughs in healthcare this week"
@@ -1203,11 +1252,9 @@ export default function CreatePostPage() {
                         height={platformSettings?.card_height || 1350}
                         onChangeHeadline={(newHeadline) => {
                           setEditedHeadline(newHeadline);
-                          markAsChanged();
                         }}
                         onChangeDescription={(newDescription) => {
                           setEditedDescription(newDescription);
-                          markAsChanged();
                         }}
                       />
                     </div>
