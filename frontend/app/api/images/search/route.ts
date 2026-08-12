@@ -5,7 +5,7 @@ import { searchBackgroundImages } from "@/lib/image-search-service";
 
 /**
  * GET /api/images/search?query=<search_term>
- * Search for background images using SerpAPI Google Images
+ * Search for background images using Pixabay API
  * Requires authentication
  */
 export async function GET(request: NextRequest) {
@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
     } catch (error) {
       // Handle service errors
       if (error instanceof Error) {
-        if (error.message.includes("SERPAPI_KEY")) {
+        if (error.message.includes("PIXABAY_API_KEY")) {
           return NextResponse.json(
             { error: "Image search service not configured" },
             { status: 500 }
