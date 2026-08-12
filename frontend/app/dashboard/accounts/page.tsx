@@ -28,6 +28,52 @@ export default function AccountsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [disconnecting, setDisconnecting] = useState<number | null>(null);
+
+  const handleDisconnect = async (account: ConnectedAccount) => {
+    const platformName = PLATFORMS.find(p => p.id === account.platform)?.label || account.platform;
+    const confirmed = window.confirm(
+      `Disconnect ${platformName}? You'll need to reconnect to publish there again.`
+    );
+    
+    if (!confirmed) return;
+
+    setDisconnecting(account.id);
+    setError(null);
+    
+    try {
+      const headers: HeadersInit = {};
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+      
+      const res = await fetch(`/api/social-accounts/${account.id}`, { 
+        method: "DELETE",
+        headers 
+      });
+      
+      if (res.status === 401) {
+        localStorage.removeItem("auth_token");
+        router.push("/login");
+        return;
+      }
+      
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({ error: "Unknown error" }));
+        throw new Error(errorData.error || `${res.status}: ${res.statusText}`);
+      }
+      
+      const result = await res.json();
+      setSuccessMessage(result.message || `${platformName} disconnected successfully`);
+      
+      // Refetch accounts to update the UI
+      fetchAccounts();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to disconnect account");
+    } finally {
+      setDisconnecting(null);
+    }
+  };
 
   const fetchAccounts = useCallback(async () => {
     setLoading(true);
@@ -173,23 +219,6 @@ export default function AccountsPage() {
           </div>
         )}
 
-        {/* Success banner */}
-        {successMessage && (
-          <div className="mb-6 flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm text-emerald-700">
-            <CheckCircleIcon className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
-            <div>
-              <p className="font-semibold">Success!</p>
-              <p className="mt-0.5">{successMessage}</p>
-              <button
-                onClick={() => setSuccessMessage(null)}
-                className="mt-2 underline underline-offset-2 font-medium"
-              >
-                Dismiss
-              </button>
-            </div>
-          </div>
-        )}
-
         {/* Platform grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {PLATFORMS.map((platform) => {
@@ -243,9 +272,17 @@ export default function AccountsPage() {
                         className="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2"
                       >
                         <PageIcon className="h-3.5 w-3.5 shrink-0 text-slate-400" />
-                        <p className="text-xs font-medium text-slate-700 truncate">
+                        <p className="text-xs font-medium text-slate-700 truncate flex-1">
                           {acct.display_name ?? acct.platform_account_id}
                         </p>
+                        <button
+                          onClick={() => handleDisconnect(acct)}
+                          disabled={disconnecting === acct.id}
+                          className="ml-2 text-xs text-red-500 hover:text-red-700 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition"
+                          title={`Disconnect ${acct.display_name ?? acct.platform_account_id}`}
+                        >
+                          {disconnecting === acct.id ? "..." : "Disconnect"}
+                        </button>
                       </div>
                     ))}
                   </div>
