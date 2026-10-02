@@ -125,67 +125,49 @@ export async function GET(request: NextRequest) {
     // Step 3: Fetch user's Facebook Pages
     const pages = await fetchPages(longLivedToken);
 
-    // Step 4: Upsert each page into social_accounts
+    // Step 4: Upsert each page into social_accounts.
+    //
+    // findFirst + update/create rather than prisma.upsert(): the table has no
+    // unique constraint on (user_id, platform, platform_account_id) so there is
+    // no natural `where` to upsert on. The previous `where: { id: 0 }` never
+    // matched a real row, so every reconnect silently inserted a duplicate
+    // instead of refreshing the stored token.
     const pageNames: string[] = [];
     const tokenExpiresAt = expires_in
       ? new Date(Date.now() + expires_in * 1000)
       : null;
 
     for (const page of pages) {
-      await prisma.social_accounts.upsert({
+      const existing = await prisma.social_accounts.findFirst({
         where: {
-          // Composite unique constraint: user_id + platform + platform_account_id
-          // Since Prisma doesn't support composite unique on this table,
-          // we'll use a workaround with findFirst + create/update
-          id: 0, // Dummy value, will use custom logic below
-        },
-        update: {
-          access_token: page.access_token,
-          display_name: page.name,
-          token_expires_at: tokenExpiresAt,
-          updated_at: new Date(),
-        },
-        create: {
           user_id: userId,
           platform: "facebook",
           platform_account_id: page.id,
-          display_name: page.name,
-          access_token: page.access_token,
-          token_expires_at: tokenExpiresAt,
         },
-      }).catch(async () => {
-        // If upsert fails due to unique constraint, try manual approach
-        const existing = await prisma.social_accounts.findFirst({
-          where: {
+      });
+
+      if (existing) {
+        await prisma.social_accounts.update({
+          where: { id: existing.id },
+          data: {
+            access_token: page.access_token,
+            display_name: page.name,
+            token_expires_at: tokenExpiresAt,
+            updated_at: new Date(),
+          },
+        });
+      } else {
+        await prisma.social_accounts.create({
+          data: {
             user_id: userId,
             platform: "facebook",
             platform_account_id: page.id,
+            display_name: page.name,
+            access_token: page.access_token,
+            token_expires_at: tokenExpiresAt,
           },
         });
-
-        if (existing) {
-          await prisma.social_accounts.update({
-            where: { id: existing.id },
-            data: {
-              access_token: page.access_token,
-              display_name: page.name,
-              token_expires_at: tokenExpiresAt,
-              updated_at: new Date(),
-            },
-          });
-        } else {
-          await prisma.social_accounts.create({
-            data: {
-              user_id: userId,
-              platform: "facebook",
-              platform_account_id: page.id,
-              display_name: page.name,
-              access_token: page.access_token,
-              token_expires_at: tokenExpiresAt,
-            },
-          });
-        }
-      });
+      }
 
       pageNames.push(page.name);
     }

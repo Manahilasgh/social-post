@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { HistoryEntry, PublishStatus } from "@/app/dashboard/history/page";
-import { STATUS_STYLES, mediaUrl } from "@/app/dashboard/history/page";
+import { STATUS_STYLES, entryThumbnail, entryStatus } from "@/app/dashboard/history/page";
 import { useAuth } from "@/lib/auth-context";
 
 // ---------------------------------------------------------------------------
@@ -122,6 +122,12 @@ export default function HistoryDetailPanel({ id, onClose }: Props) {
 
   const isOpen = id !== null;
 
+  // Card image lives on the platform variant (media_url); media_filename is the
+  // legacy single-image column kept as a fallback.
+  const thumbUrl = entry ? entryThumbnail(entry) : null;
+  // Roll per-platform statuses up so the badge reflects the real state.
+  const cardStatus = entry ? entryStatus(entry) : null;
+
   return (
     <>
       {/* Backdrop */}
@@ -184,10 +190,10 @@ export default function HistoryDetailPanel({ id, onClose }: Props) {
             <>
               {/* Card image — full-width at the top, 4:5 */}
               <div className="relative w-full aspect-[4/5] bg-slate-100 overflow-hidden">
-                {entry.media_filename ? (
+                {thumbUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
-                    src={mediaUrl(entry.media_filename)}
+                    src={thumbUrl}
                     alt="Post card"
                     className="w-full h-full object-cover"
                   />
@@ -213,7 +219,7 @@ export default function HistoryDetailPanel({ id, onClose }: Props) {
 
                 {/* Status badge overlay */}
                 <div className="absolute top-3 left-3">
-                  <StatusBadge status={entry.publish_status} />
+                  <StatusBadge status={cardStatus ?? entry.publish_status} />
                 </div>
               </div>
 

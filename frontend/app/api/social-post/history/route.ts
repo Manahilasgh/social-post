@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 
 /**
  * POST /api/social-post/history
- * Create a new draft post entry
+ * Create a new draft post entry with platform variants
  */
 export async function POST(request: NextRequest) {
   try {
@@ -20,6 +20,7 @@ export async function POST(request: NextRequest) {
       hashtags,
       news_results,
       settings_snapshot,
+      variants,
     } = body;
 
     // Validate required fields
@@ -47,7 +48,34 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    return NextResponse.json(entry, { status: 201 });
+    // Create platform variants if provided
+    if (variants && typeof variants === "object") {
+      const variantPromises = Object.entries(variants).map(([platform, variantData]: [string, any]) => {
+        return prisma.social_post_platform_variants.create({
+          data: {
+            history_id: entry.id,
+            platform,
+            description: variantData.description || null,
+            aspect_ratio: variantData.aspect_ratio || null,
+            width: variantData.width || null,
+            height: variantData.height || null,
+            publish_status: "draft",
+          },
+        });
+      });
+
+      await Promise.all(variantPromises);
+    }
+
+    // Fetch the created entry with variants included
+    const entryWithVariants = await prisma.social_post_history.findUnique({
+      where: { id: entry.id },
+      include: {
+        social_post_platform_variants: true,
+      },
+    });
+
+    return NextResponse.json(entryWithVariants, { status: 201 });
   } catch (error) {
     return handleApiError(error);
   }
@@ -55,7 +83,7 @@ export async function POST(request: NextRequest) {
 
 /**
  * GET /api/social-post/history
- * List all history entries for the current user
+ * List all history entries for the current user with platform variants
  */
 export async function GET(request: NextRequest) {
   try {
@@ -64,6 +92,9 @@ export async function GET(request: NextRequest) {
     const entries = await prisma.social_post_history.findMany({
       where: {
         user_id: user.id,
+      },
+      include: {
+        social_post_platform_variants: true,
       },
       orderBy: {
         created_at: "desc",

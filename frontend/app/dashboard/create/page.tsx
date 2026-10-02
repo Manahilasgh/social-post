@@ -48,15 +48,28 @@ interface BgImage {
 
 interface GeneratedData {
   headline: string;
-  description: string;
   story_description: string;
   hashtags: string[];
   news_results: NewsResult[];
-  // Platform-specific fields from the generate endpoint
-  platform: string;
+  variants: {
+    [platform: string]: {
+      description: string;
+      aspect_ratio: string;
+      width: number;
+      height: number;
+      description_max_chars: number;
+    };
+  };
+}
+
+interface PlatformVariantState {
+  description: string;
+  imageUrl: string | null;  // Selected background image for this platform
+  mediaUrl: string | null;   // Exported card image URL
+  publishStatus: string;
   aspect_ratio: string;
-  card_width: number;
-  card_height: number;
+  width: number;
+  height: number;
   description_max_chars: number;
 }
 
@@ -74,6 +87,24 @@ interface PublishResponse {
   results: PlatformResult[];
 }
 
+interface PlatformVariant {
+  id: number;
+  history_id: number;
+  platform: string;
+  description: string | null;
+  media_url: string | null;
+  aspect_ratio: string | null;
+  width: number | null;
+  height: number | null;
+  publish_status: string;
+  external_id: string | null;
+  external_url: string | null;
+  error: string | null;
+  published_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 interface DraftHistory {
   id: number;
   user_id: number;
@@ -89,6 +120,11 @@ interface DraftHistory {
   published_at: string | null;
   created_at: string;
   updated_at: string;
+  social_post_platform_variants?: PlatformVariant[];
+}
+
+interface ReadyPlatformsResponse {
+  ready_platforms: string[];
 }
 
 type AsyncState = "idle" | "loading" | "success" | "error";
@@ -157,15 +193,29 @@ export default function CreatePostPage() {
   const { token } = useAuth();
 
   const [query, setQuery] = useState("");
-  const [selectedPlatform, setSelectedPlatform] = useState("facebook");
+  const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>(["facebook"]);  // Multi-select for generation
 
   // generate
   const [generateState, setGenerateState] = useState<AsyncState>("idle");
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [data, setData] = useState<GeneratedData | null>(null);
-  // editable copies of headline/description — updated by inline edits on the card
+  
+  // Shared fields across all platforms
   const [editedHeadline, setEditedHeadline] = useState<string>("");
-  const [editedDescription, setEditedDescription] = useState<string>("");
+  const [editedStoryDescription, setEditedStoryDescription] = useState<string>("");
+  const [editedHashtags, setEditedHashtags] = useState<string[]>([]);
+  
+  // Per-platform variant state
+  const [platformVariantsState, setPlatformVariantsState] = useState<{
+    [platform: string]: PlatformVariantState;
+  }>({});
+  
+  // Active platform tab
+  const [activePlatformTab, setActivePlatformTab] = useState<string>("");
+  
+  // Shared background image (used by all platforms unless overridden)
+  const [sharedImageUrl, setSharedImageUrl] = useState<string | null>(null);
+  
   // the article the user has selected as the basis for the card image
   const [selectedArticle, setSelectedArticle] = useState<NewsResult | null>(null);
   // which visual template is active
@@ -174,25 +224,23 @@ export default function CreatePostPage() {
   // background image gallery
   const [bgImages, setBgImages] = useState<BgImage[]>([]);
   const [bgLoading, setBgLoading] = useState(false);
-  // the URL actually used as the card background (original-quality)
-  const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null);
 
   // save draft
   const [saveState, setSaveState] = useState<AsyncState>("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [historyId, setHistoryId] = useState<number | null>(null);
 
-  // export + upload
-  const [exportState, setExportState] = useState<AsyncState>("idle");
-  const [exportError, setExportError] = useState<string | null>(null);
-  const [exportedDataUrl, setExportedDataUrl] = useState<string | null>(null);
+  // export + upload - now per-platform
+  const [exportingPlatforms, setExportingPlatforms] = useState<Set<string>>(new Set());
+  const [exportErrors, setExportErrors] = useState<{ [platform: string]: string }>({});
 
-  // publish
+  // publish - enhanced multi-platform system
   const [publishState, setPublishState] = useState<AsyncState>("idle");
   const [publishError, setPublishError] = useState<string | null>(null);
   const [publishResult, setPublishResult] = useState<PublishResponse | null>(null);
-  // which platforms are selected; starts with just facebook (the only live one)
-  const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>(["facebook"]);
+  const [selectedPlatformsForPublish, setSelectedPlatformsForPublish] = useState<string[]>([]);
+  const [platformVariants, setPlatformVariants] = useState<PlatformVariant[]>([]);
+  const [readyPlatforms, setReadyPlatforms] = useState<string[]>([]);
   
   // Draft editing state
   const [isEditingDraft, setIsEditingDraft] = useState<boolean>(false);
@@ -201,21 +249,15 @@ export default function CreatePostPage() {
   const [lastSavedSnapshot, setLastSavedSnapshot] = useState<{
     query: string;
     headline: string;
-    description: string;
     story_description: string;
     hashtags: string[];
-    selectedImageUrl: string | null;
-  } | null>(null);
-
-  // Platform for generation (single-select, used for sizing/copy generation)
-  const [generationPlatform, setGenerationPlatform] = useState<string>("facebook");
-  
-  // Platform-specific settings from the generate response
-  const [platformSettings, setPlatformSettings] = useState<{
-    aspect_ratio: string;
-    card_width: number;
-    card_height: number;
-    description_max_chars: number;
+    sharedImageUrl: string | null;
+    variants: {
+      [platform: string]: {
+        description: string;
+        imageUrl: string | null;
+      };
+    };
   } | null>(null);
 
   // ---------------------------------------------------------------------------
@@ -226,10 +268,16 @@ export default function CreatePostPage() {
   const currentSnapshot = {
     query,
     headline: editedHeadline,
-    description: editedDescription,
-    story_description: data?.story_description || "",
-    hashtags: data?.hashtags || [],
-    selectedImageUrl,
+    story_description: editedStoryDescription,
+    hashtags: editedHashtags,
+    sharedImageUrl,
+    variants: Object.keys(platformVariantsState).reduce((acc, platform) => {
+      acc[platform] = {
+        description: platformVariantsState[platform]?.description || "",
+        imageUrl: platformVariantsState[platform]?.imageUrl || null,
+      };
+      return acc;
+    }, {} as { [platform: string]: { description: string; imageUrl: string | null } })
   };
   
   const hasUnsavedChanges = isEditingDraft && lastSavedSnapshot && 
@@ -253,32 +301,86 @@ export default function CreatePostPage() {
         
         // Pre-fill all the state
         setQuery(draft.query || "");
+        // For drafts created before multi-platform support, we need to handle the old single description field
+        // Build a variants object with default Facebook platform
+        const variants: GeneratedData["variants"] = {
+          facebook: {
+            description: draft.description || "",
+            aspect_ratio: "1:1",
+            width: 1200,
+            height: 1200,
+            description_max_chars: 280,
+          }
+        };
+        
         setData({
           headline: draft.headline || "",
-          description: draft.description || "",
           story_description: draft.story_description || "",
           hashtags: draft.hashtags || [],
           news_results: draft.news_results || [],
-          // Platform-specific fields - use defaults when loading from draft
-          platform: "facebook",
-          aspect_ratio: "1:1",
-          card_width: 1200,
-          card_height: 1200,
-          description_max_chars: 280,
+          variants,
         });
         setEditedHeadline(draft.headline || "");
-        setEditedDescription(draft.description || "");
+        setEditedStoryDescription(draft.story_description || "");
+        
+        // Initialize platform variant state for the draft
+        // Check if we have loaded variants from the database
+        const platformVariantsFromDB: { [platform: string]: PlatformVariantState } = {};
+        
+        if (draft.social_post_platform_variants && draft.social_post_platform_variants.length > 0) {
+          // Load from database variants
+          draft.social_post_platform_variants.forEach(dbVariant => {
+            platformVariantsFromDB[dbVariant.platform] = {
+              description: dbVariant.description || "",
+              imageUrl: null, // Custom background image (not the exported card)
+              mediaUrl: dbVariant.media_url, // Exported card image URL
+              publishStatus: dbVariant.publish_status,
+              aspect_ratio: dbVariant.aspect_ratio || "1:1",
+              width: dbVariant.width || 1200,
+              height: dbVariant.height || 1200,
+              description_max_chars: 280, // Default, should be in settings if needed
+            };
+          });
+          setPlatformVariantsState(platformVariantsFromDB);
+          setActivePlatformTab(Object.keys(platformVariantsFromDB)[0] || "facebook");
+        } else {
+          // Fallback: Old draft without variants
+          platformVariantsFromDB.facebook = {
+            description: draft.description || "",
+            imageUrl: null,
+            mediaUrl: draft.media_filename ? (
+              draft.media_filename.startsWith('http') 
+                ? draft.media_filename 
+                : `/uploads/social/${draft.media_filename}`
+            ) : null,
+            publishStatus: draft.media_filename ? "media_ready" : "draft",
+            aspect_ratio: "1:1",
+            width: 1200,
+            height: 1200,
+            description_max_chars: 280,
+          };
+          setPlatformVariantsState(platformVariantsFromDB);
+          setActivePlatformTab("facebook");
+        }
         setHistoryId(draft.id);
         setIsEditingDraft(true);
         
         // Set the saved snapshot to current loaded state
+        const snapshotVariants: { [platform: string]: { description: string; imageUrl: string | null } } = {};
+        Object.keys(platformVariantsFromDB).forEach(platform => {
+          snapshotVariants[platform] = {
+            description: platformVariantsFromDB[platform].description,
+            imageUrl: platformVariantsFromDB[platform].imageUrl,
+          };
+        });
+        
         setLastSavedSnapshot({
           query: draft.query || "",
           headline: draft.headline || "",
-          description: draft.description || "",
           story_description: draft.story_description || "",
           hashtags: draft.hashtags || [],
-          selectedImageUrl: null, // Will be set later if media exists
+          sharedImageUrl: null, // Will be set later if media exists
+          variants: snapshotVariants,
         });
         
         setSaveState("success"); // Mark as already saved
@@ -286,16 +388,6 @@ export default function CreatePostPage() {
         // Auto-select the first article for source/date metadata
         const firstArticle = draft.news_results?.[0] ?? null;
         setSelectedArticle(firstArticle);
-        
-        // If there's an existing media file, show it
-        if (draft.media_filename) {
-          setExportState("success");
-          // media_filename now stores full URLs from Vercel Blob
-          const mediaUrl = draft.media_filename.startsWith('http') 
-            ? draft.media_filename 
-            : `/uploads/social/${draft.media_filename}`; // backward compatibility
-          setExportedDataUrl(mediaUrl);
-        }
         
         // Set up the background image gallery - combining article thumbnails + search results
         if (draft.news_results?.length > 0) {
@@ -311,7 +403,7 @@ export default function CreatePostPage() {
           
           // Auto-select the first image if no media file exists
           if (!draft.media_filename && articleBgImages[0]) {
-            setSelectedImageUrl(articleBgImages[0].original);
+            setSharedImageUrl(articleBgImages[0].original);
           }
         }
         
@@ -350,18 +442,41 @@ export default function CreatePostPage() {
     loadDraft();
   }, [searchParams, token]);
 
-  // Update snapshot when selectedImageUrl changes for loaded drafts
+  // Update snapshot when sharedImageUrl changes for loaded drafts
   useEffect(() => {
-    if (isEditingDraft && lastSavedSnapshot && selectedImageUrl !== lastSavedSnapshot.selectedImageUrl) {
-      // Only update if this is the initial load (we have a snapshot but selectedImageUrl was null)
-      if (lastSavedSnapshot.selectedImageUrl === null) {
+    if (isEditingDraft && lastSavedSnapshot && sharedImageUrl !== lastSavedSnapshot.sharedImageUrl) {
+      // Only update if this is the initial load (we have a snapshot but sharedImageUrl was null)
+      if (lastSavedSnapshot.sharedImageUrl === null) {
         setLastSavedSnapshot(prev => prev ? {
           ...prev,
-          selectedImageUrl
+          sharedImageUrl
         } : null);
       }
     }
-  }, [selectedImageUrl, isEditingDraft, lastSavedSnapshot]);
+  }, [sharedImageUrl, isEditingDraft, lastSavedSnapshot]);
+
+  // Load platform variants and check ready platforms when historyId changes
+  useEffect(() => {
+    if (historyId && token) {
+      loadPlatformVariants();
+      checkReadyPlatforms();
+    }
+  }, [historyId, token]);
+
+  // Auto-check platforms when they become media_ready
+  useEffect(() => {
+    const readyPlatformIds = Object.keys(platformVariantsState).filter(
+      (platformId) => platformVariantsState[platformId]?.publishStatus === "media_ready"
+    );
+    
+    // Only auto-check platforms that aren't already published
+    const unpublishedReady = readyPlatformIds.filter((platformId) => {
+      const result = publishResult?.results.find((r) => r.platform === platformId);
+      return !result || (result.status !== "published" && result.status !== "success");
+    });
+    
+    setSelectedPlatformsForPublish(unpublishedReady);
+  }, [platformVariantsState, publishResult]);
 
   // ---------------------------------------------------------------------------
   // Reset to initial state for creating a new post
@@ -369,20 +484,23 @@ export default function CreatePostPage() {
   function resetForm() {
     // Reset all form state to initial values
     setQuery("");
-    setSelectedPlatform("facebook");
+    setSelectedPlatforms(["facebook"]);  // Reset to default multi-select
     
     // Clear generation results
     setGenerateState("idle");
     setGenerateError(null);
     setData(null);
     setEditedHeadline("");
-    setEditedDescription("");
+    setEditedStoryDescription("");
+    setEditedHashtags([]);
+    setPlatformVariantsState({});
+    setActivePlatformTab("");
     setSelectedArticle(null);
     
     // Clear background images
     setBgImages([]);
     setBgLoading(false);
-    setSelectedImageUrl(null);
+    setSharedImageUrl(null);
     
     // Clear save state
     setSaveState("idle");
@@ -390,15 +508,16 @@ export default function CreatePostPage() {
     setHistoryId(null);
     
     // Clear export state
-    setExportState("idle");
-    setExportError(null);
-    setExportedDataUrl(null);
+    setExportingPlatforms(new Set());
+    setExportErrors({});
     
     // Clear publish state
     setPublishState("idle");
     setPublishError(null);
     setPublishResult(null);
-    setSelectedPlatforms(["facebook"]);
+    setSelectedPlatformsForPublish([]);
+    setPlatformVariants([]);
+    setReadyPlatforms([]);
   }
 
   // ---------------------------------------------------------------------------
@@ -411,26 +530,30 @@ export default function CreatePostPage() {
     setGenerateError(null);
     setData(null);
     setEditedHeadline("");
-    setEditedDescription("");
+    setEditedStoryDescription("");
+    setEditedHashtags([]);
+    setPlatformVariantsState({});
+    setActivePlatformTab("");
     setSelectedArticle(null);
     setBgImages([]);
-    setSelectedImageUrl(null);
+    setSharedImageUrl(null);
     setSaveState("idle");
     setSaveError(null);
     setHistoryId(null);
-    setIsEditingDraft(false); // Reset to "create new" mode when generating fresh content
-    setLastSavedSnapshot(null); // Reset saved snapshot
-    setExportState("idle");
-    setExportedDataUrl(null);
+    setIsEditingDraft(false);
+    setLastSavedSnapshot(null);
+    setExportingPlatforms(new Set());
+    setExportErrors({});
     setPublishState("idle");
-    setSelectedPlatforms(["facebook"]);
-    setPlatformSettings(null);
+    setSelectedPlatformsForPublish([]);
+    setPlatformVariants([]);
+    setReadyPlatforms([]);
 
     try {
       // Fire generate and image search in parallel
       const [json] = await Promise.all([
-        apiFetch<GeneratedData>(`/api/social-post/generate`, { query, platform: selectedPlatform }, token),
-        // Image search runs alongside; results populate the gallery asynchronously
+        apiFetch<GeneratedData>(`/api/social-post/generate`, { query, platforms: selectedPlatforms }, token),
+        // Image search runs alongside
         (async () => {
           setBgLoading(true);
           try {
@@ -466,15 +589,31 @@ export default function CreatePostPage() {
 
       setData(json);
       setEditedHeadline(json.headline);
-      setEditedDescription(json.description);
+      setEditedStoryDescription(json.story_description);
+      setEditedHashtags(json.hashtags);
       
-      // Store platform-specific settings
-      setPlatformSettings({
-        aspect_ratio: json.aspect_ratio || "4:5",
-        card_width: json.card_width || 1080,
-        card_height: json.card_height || 1350,
-        description_max_chars: json.description_max_chars || 500,
+      // Initialize platform variant state from response
+      const variantsState: { [platform: string]: PlatformVariantState } = {};
+      Object.keys(json.variants).forEach(platform => {
+        const variant = json.variants[platform];
+        variantsState[platform] = {
+          description: variant.description,
+          imageUrl: null,  // Will use shared image by default
+          mediaUrl: null,
+          publishStatus: "draft",
+          aspect_ratio: variant.aspect_ratio,
+          width: variant.width,
+          height: variant.height,
+          description_max_chars: variant.description_max_chars,
+        };
       });
+      setPlatformVariantsState(variantsState);
+      
+      // Set first platform as active tab
+      const firstPlatform = Object.keys(json.variants)[0];
+      if (firstPlatform) {
+        setActivePlatformTab(firstPlatform);
+      }
       
       // Auto-select the first article for source/date metadata
       const firstArticle = json.news_results?.[0] ?? null;
@@ -496,30 +635,74 @@ export default function CreatePostPage() {
     setSaveError(null);
 
     try {
-      const saved = await apiFetch<{ id: number }>(
-        `/api/social-post/history`,
-        {
-          user_id: 1,
-          query,
-          headline: editedHeadline,
-          description: editedDescription,
-          story_description: data.story_description,
-          hashtags: data.hashtags,
-          news_results: data.news_results,
-        },
-        token
-      );
-      setHistoryId(saved.id);
+      // Build variants object from platformVariantsState
+      const variants: {
+        [platform: string]: {
+          description: string;
+          aspect_ratio: string;
+          width: number;
+          height: number;
+        };
+      } = {};
+      
+      Object.keys(platformVariantsState).forEach(platform => {
+        const variant = platformVariantsState[platform];
+        variants[platform] = {
+          description: variant.description,
+          aspect_ratio: variant.aspect_ratio,
+          width: variant.width,
+          height: variant.height,
+        };
+      });
+      
+      const payload = {
+        user_id: 1,
+        query,
+        headline: editedHeadline,
+        story_description: editedStoryDescription,
+        hashtags: editedHashtags,
+        news_results: data.news_results,
+        settings_snapshot: null, // Can be used for additional metadata if needed
+        variants,
+      };
+      
+      let saved: { id: number };
+      
+      if (isEditingDraft && historyId) {
+        // Update existing draft (PUT)
+        saved = await apiFetch<{ id: number }>(
+          `/api/social-post/history/${historyId}`,
+          payload,
+          token,
+          "PUT"
+        );
+      } else {
+        // Create new draft (POST)
+        saved = await apiFetch<{ id: number }>(
+          `/api/social-post/history`,
+          payload,
+          token
+        );
+        setHistoryId(saved.id);
+        setIsEditingDraft(true);
+      }
+      
       setSaveState("success");
       
       // Update the saved snapshot to reflect current state
       setLastSavedSnapshot({
         query,
         headline: editedHeadline,
-        description: editedDescription,
-        story_description: data.story_description,
-        hashtags: data.hashtags,
-        selectedImageUrl,
+        story_description: editedStoryDescription,
+        hashtags: editedHashtags,
+        sharedImageUrl,
+        variants: Object.keys(platformVariantsState).reduce((acc, platform) => {
+          acc[platform] = {
+            description: platformVariantsState[platform]?.description || "",
+            imageUrl: platformVariantsState[platform]?.imageUrl || null,
+          };
+          return acc;
+        }, {} as { [platform: string]: { description: string; imageUrl: string | null } }),
       });
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Unknown error");
@@ -528,32 +711,104 @@ export default function CreatePostPage() {
   }
 
   // ---------------------------------------------------------------------------
-  // Step 2b — Export card image and upload
+  // Step 2b — Export card image and upload (per-platform)
   // ---------------------------------------------------------------------------
-  async function handleExportAndUpload() {
+  async function handleExportAndUploadForPlatform(platform: string) {
     if (!data || !historyId || !captureRef.current) return;
 
-    setExportState("loading");
-    setExportError(null);
-    setExportedDataUrl(null);
+    const variant = platformVariantsState[platform];
+    if (!variant) return;
+
+    // Mark this platform as exporting
+    setExportingPlatforms(prev => new Set(prev).add(platform));
+    setExportErrors(prev => {
+      const newErrors = { ...prev };
+      delete newErrors[platform];
+      return newErrors;
+    });
 
     try {
-      const file = await exportCardAsPng(captureRef.current, `post-${historyId}.png`);
-      const localUrl = URL.createObjectURL(file);
-      setExportedDataUrl(localUrl);
-      await uploadCardMedia(historyId, file, token);
-      setExportState("success");
+      const file = await exportCardAsPng(
+        captureRef.current,
+        `post-${historyId}-${platform}.png`,
+        variant.width,
+        variant.height
+      );
+      
+      const response = await uploadCardMedia(historyId, platform, file, token);
+      
+      if (!response.ok) {
+        throw new Error(`Upload failed: ${response.statusText}`);
+      }
+      
+      const result = await response.json();
+      
+      // Update platform variant state with media URL and status
+      setPlatformVariantsState(prev => ({
+        ...prev,
+        [platform]: {
+          ...prev[platform],
+          mediaUrl: result.media_url,
+          publishStatus: "media_ready",
+        },
+      }));
+      
+      // Remove from exporting set
+      setExportingPlatforms(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(platform);
+        return newSet;
+      });
     } catch (err) {
-      setExportError(err instanceof Error ? err.message : "Unknown error");
-      setExportState("error");
+      setExportErrors(prev => ({
+        ...prev,
+        [platform]: err instanceof Error ? err.message : "Unknown error",
+      }));
+      
+      // Remove from exporting set
+      setExportingPlatforms(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(platform);
+        return newSet;
+      });
     }
   }
 
   // ---------------------------------------------------------------------------
-  // Step 3 — Publish
+  // Enhanced Multi-Platform Publish Functions
+  // ---------------------------------------------------------------------------
+  
+  async function checkReadyPlatforms() {
+    if (!historyId || !token) return;
+    
+    try {
+      const response = await apiGet<ReadyPlatformsResponse>(`/api/social-post/history/${historyId}/publish`, token);
+      setReadyPlatforms(response.ready_platforms);
+      // Pre-check all ready platforms by default
+      setSelectedPlatformsForPublish(response.ready_platforms);
+    } catch (err) {
+      console.error("Failed to check ready platforms:", err);
+    }
+  }
+
+  async function loadPlatformVariants() {
+    if (!historyId || !token) return;
+    
+    try {
+      const entry = await apiGet<DraftHistory>(`/api/social-post/history/${historyId}`, token);
+      if (entry.social_post_platform_variants) {
+        setPlatformVariants(entry.social_post_platform_variants);
+      }
+    } catch (err) {
+      console.error("Failed to load platform variants:", err);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Step 3 — Enhanced Multi-Platform Publish
   // ---------------------------------------------------------------------------
   async function handlePublish() {
-    if (!historyId) return;
+    if (!historyId || selectedPlatformsForPublish.length === 0) return;
 
     setPublishState("loading");
     setPublishError(null);
@@ -562,11 +817,15 @@ export default function CreatePostPage() {
     try {
       const result = await apiFetch<PublishResponse>(
         `/api/social-post/history/${historyId}/publish`,
-        { user_id: 1, platforms: selectedPlatforms },
+        { platforms: selectedPlatformsForPublish },
         token
       );
       setPublishResult(result);
       setPublishState("success");
+      
+      // Reload platform variants to get updated publish statuses
+      await loadPlatformVariants();
+      await checkReadyPlatforms();
     } catch (err) {
       setPublishError(err instanceof Error ? err.message : "Unknown error");
       setPublishState("error");
@@ -589,26 +848,67 @@ export default function CreatePostPage() {
     setGenerateError(null);
     setData(null);
     setEditedHeadline("");
-    setEditedDescription("");
+    setEditedStoryDescription("");
+    setEditedHashtags([]);
+    setPlatformVariantsState({});
+    setActivePlatformTab("");
     setSelectedArticle(null);
     setSelectedVariant("dark");
     
     setBgImages([]);
     setBgLoading(false);
-    setSelectedImageUrl(null);
+    setSharedImageUrl(null);
     
     setSaveState("idle");
     setSaveError(null);
     setHistoryId(null);
     
-    setExportState("idle");
-    setExportError(null);
-    setExportedDataUrl(null);
+    setExportingPlatforms(new Set());
+    setExportErrors({});
     
     setPublishState("idle");
     setPublishError(null);
     setPublishResult(null);
-    setSelectedPlatforms(["facebook"]);
+    setSelectedPlatformsForPublish([]);
+    setPlatformVariants([]);
+    setReadyPlatforms([]);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Platform Variant Helpers
+  // ---------------------------------------------------------------------------
+  
+  // Update description for current active platform
+  function updatePlatformDescription(platform: string, description: string) {
+    setPlatformVariantsState(prev => ({
+      ...prev,
+      [platform]: {
+        ...prev[platform],
+        description,
+      },
+    }));
+  }
+  
+  // Set platform-specific image (overrides shared image)
+  function setPlatformImage(platform: string, imageUrl: string | null) {
+    setPlatformVariantsState(prev => ({
+      ...prev,
+      [platform]: {
+        ...prev[platform],
+        imageUrl,
+      },
+    }));
+  }
+  
+  // Get effective image URL for a platform (platform-specific or shared)
+  function getEffectiveImageUrl(platform: string): string {
+    const platformImage = platformVariantsState[platform]?.imageUrl;
+    return platformImage ?? sharedImageUrl ?? allBgImages[0]?.original ?? "";
+  }
+  
+  // Check if platform is using custom image
+  function hasCustomImage(platform: string): boolean {
+    return platformVariantsState[platform]?.imageUrl !== null;
   }
 
   // ---------------------------------------------------------------------------
@@ -618,10 +918,19 @@ export default function CreatePostPage() {
   const hasResults = !!data;
   const isSaving = saveState === "loading";
   const isSaved = saveState === "success";
-  const isExporting = exportState === "loading";
-  const isExported = exportState === "success";
+  const isExportingAny = exportingPlatforms.size > 0;
   const isPublishing = publishState === "loading";
-  const anyBusy = isGenerating || isSaving || isExporting || isPublishing;
+  const anyBusy = isGenerating || isSaving || isExportingAny || isPublishing;
+  
+  // Check if current platform has exported image
+  const currentPlatformHasImage = activePlatformTab 
+    ? platformVariantsState[activePlatformTab]?.publishStatus === "media_ready"
+    : false;
+  
+  // Check if any platform has exported image
+  const anyPlatformHasImage = Object.values(platformVariantsState).some(
+    v => v.publishStatus === "media_ready"
+  );
 
   // selectedArticle drives the card preview; falls back to first result
   const activeArticle = selectedArticle ?? data?.news_results?.[0] ?? null;
@@ -641,10 +950,10 @@ export default function CreatePostPage() {
 
   const allBgImages: BgImage[] = [...articleBgImages, ...bgImages];
 
-  // The active image URL for the card — selectedImageUrl wins (set by gallery or upload),
+  // The active image URL for the card — sharedImageUrl wins (set by gallery or upload),
   // otherwise fall back to the first image in the combined list
   // For minimal variant, image isn't displayed so we can use a placeholder
-  const activeImageUrl = selectedImageUrl ?? allBgImages[0]?.original ?? 
+  const activeImageUrl = sharedImageUrl ?? allBgImages[0]?.original ?? 
     (selectedVariant === "minimal" ? "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMSIgaGVpZ2h0PSIxIiB2aWV3Qm94PSIwIDAgMSAxIiBmaWxsPSJub25lIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxyZWN0IHdpZHRoPSIxIiBoZWlnaHQ9IjEiIGZpbGw9IiNmZmZmZmYiLz48L3N2Zz4=" : "");
 
   // ---------------------------------------------------------------------------
@@ -691,12 +1000,12 @@ export default function CreatePostPage() {
             </div>
           </div>
 
-          {/* Platform selector */}
+          {/* Platform selector - Multi-select */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 mb-6">
-            <SectionLabel>Platform</SectionLabel>
+            <SectionLabel>Platforms (select one or more)</SectionLabel>
             <div className="flex flex-wrap gap-2">
               {PLATFORMS.map((platform) => {
-                const isSelected = selectedPlatform === platform.id;
+                const isSelected = selectedPlatforms.includes(platform.id);
                 const canGenerate = platform.id === "facebook"; // Only facebook is implemented for generation
                 return (
                   <button
@@ -705,7 +1014,12 @@ export default function CreatePostPage() {
                     title={canGenerate ? `Generate post for ${platform.label}` : `${platform.label} — coming soon for generation`}
                     onClick={() => {
                       if (!canGenerate) return;
-                      setSelectedPlatform(platform.id);
+                      // Toggle platform in selection array
+                      setSelectedPlatforms(prev =>
+                        prev.includes(platform.id)
+                          ? prev.filter(p => p !== platform.id)
+                          : [...prev, platform.id]
+                      );
                     }}
                     className={`relative flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-medium transition
                       ${canGenerate
@@ -737,10 +1051,10 @@ export default function CreatePostPage() {
                 );
               })}
             </div>
-            {data && selectedPlatform !== data.platform && (
+            {selectedPlatforms.length === 0 && (
               <div className="mt-3 p-3 bg-amber-50 rounded-lg border border-amber-200">
                 <p className="text-sm text-amber-700">
-                  Platform changed from {data.platform} to {selectedPlatform}. Character limits may differ if you regenerate.
+                  Select at least one platform to generate content.
                 </p>
               </div>
             )}
@@ -748,24 +1062,6 @@ export default function CreatePostPage() {
 
           {/* Query input */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 mb-6">
-            <SectionLabel>Target Platform</SectionLabel>
-            <div className="flex flex-wrap gap-2 mb-4">
-              {PLATFORMS.filter(p => p.connectEnabled).map((platform) => (
-                <button
-                  key={platform.id}
-                  onClick={() => setGenerationPlatform(platform.id)}
-                  className={`flex items-center gap-2 rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition ${
-                    generationPlatform === platform.id
-                      ? "border-indigo-500 bg-indigo-50 text-indigo-700"
-                      : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
-                  }`}
-                >
-                  <div style={{ color: platform.color }}>{platform.icon}</div>
-                  {platform.label}
-                </button>
-              ))}
-            </div>
-            
             <SectionLabel>Topic / Query</SectionLabel>
             <div className="flex gap-3">
               <input
@@ -781,7 +1077,7 @@ export default function CreatePostPage() {
               />
               <button
                 onClick={handleGenerate}
-                disabled={anyBusy || !query.trim()}
+                disabled={anyBusy || !query.trim() || selectedPlatforms.length === 0}
                 className="flex items-center gap-2 rounded-xl bg-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
               >
                 {isGenerating ? <><Spinner className="h-4 w-4 animate-spin" />Generating…</> : "Generate"}
@@ -824,7 +1120,7 @@ export default function CreatePostPage() {
                     return (
                       <button
                         key={`${img.original}-${i}`}
-                        onClick={() => setSelectedImageUrl(img.original)}
+                        onClick={() => setSharedImageUrl(img.original)}
                         className={`group relative rounded-lg overflow-hidden border-2 transition-all duration-200 hover:scale-105 hover:shadow-lg cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 ${
                           isSelected
                             ? "border-indigo-500 shadow-md"
@@ -914,21 +1210,62 @@ export default function CreatePostPage() {
                 )}
               </div>
 
-              {/* Description */}
+              {/* Platform Tabs - Show when multi-platform generation is active */}
+              {hasResults && Object.keys(platformVariantsState).length > 0 && (
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+                  <SectionLabel>Platform Variants</SectionLabel>
+                  <div className="flex gap-2 flex-wrap">
+                    {Object.keys(platformVariantsState).map((platform) => {
+                      const isActive = activePlatformTab === platform;
+                      const hasImage = platformVariantsState[platform]?.publishStatus === "media_ready";
+                      const platformInfo = PLATFORMS.find(p => p.id === platform);
+                      
+                      return (
+                        <button
+                          key={platform}
+                          onClick={() => setActivePlatformTab(platform)}
+                          className={`relative flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-medium transition
+                            ${isActive
+                              ? "border-indigo-500 bg-indigo-50 text-indigo-700 shadow-sm"
+                              : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+                            }`}
+                        >
+                          <span className={isActive ? "text-indigo-600" : "text-slate-500"}>
+                            {platformInfo?.icon || "📱"}
+                          </span>
+                          <span className="capitalize">{platform}</span>
+                          {hasImage && (
+                            <span className="ml-1 flex h-5 w-5 items-center justify-center rounded-full bg-emerald-500" title="Image ready">
+                              <CheckIcon className="h-3 w-3 text-white" />
+                            </span>
+                          )}
+                          {exportingPlatforms.has(platform) && (
+                            <Spinner className="ml-1 h-4 w-4 animate-spin text-slate-400" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Description - Platform-specific when available */}
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-                <SectionLabel>Description</SectionLabel>
-                {hasResults ? (
+                <SectionLabel>Description {activePlatformTab && `(${activePlatformTab})`}</SectionLabel>
+                {hasResults && activePlatformTab && platformVariantsState[activePlatformTab] ? (
                   <>
-                    <p className="text-sm text-slate-600 leading-relaxed">{editedDescription}</p>
-                    {data && data.description_max_chars && (
+                    <p className="text-sm text-slate-600 leading-relaxed">
+                      {platformVariantsState[activePlatformTab].description}
+                    </p>
+                    {platformVariantsState[activePlatformTab].description_max_chars && (
                       <div className="mt-3 pt-3 border-t border-slate-100">
                         <p className={`text-xs ${
-                          editedDescription.length > data.description_max_chars 
+                          platformVariantsState[activePlatformTab].description.length > platformVariantsState[activePlatformTab].description_max_chars 
                             ? "text-red-600" 
                             : "text-slate-400"
                         }`}>
-                          {editedDescription.length} / {data.description_max_chars} characters
-                          {editedDescription.length > data.description_max_chars && (
+                          {platformVariantsState[activePlatformTab].description.length} / {platformVariantsState[activePlatformTab].description_max_chars} characters
+                          {platformVariantsState[activePlatformTab].description.length > platformVariantsState[activePlatformTab].description_max_chars && (
                             <span className="ml-1 font-medium">— over limit</span>
                           )}
                         </p>
@@ -1004,102 +1341,175 @@ export default function CreatePostPage() {
                   {isSaved && (
                     <div className="space-y-4 pt-3 border-t border-slate-100">
 
-                      {/* Create image row */}
+                      {/* Create image row - Per platform */}
                       <div className="flex flex-wrap items-center gap-3">
                         <button
-                          onClick={handleExportAndUpload}
-                          disabled={anyBusy || isExported}
+                          onClick={() => activePlatformTab && handleExportAndUploadForPlatform(activePlatformTab)}
+                          disabled={anyBusy || !activePlatformTab || currentPlatformHasImage}
                           className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition"
                         >
-                          {isExporting
+                          {exportingPlatforms.has(activePlatformTab)
                             ? <><Spinner className="h-4 w-4 animate-spin text-slate-500" />Creating image…</>
-                            : isExported ? "Update image" : "Create image"}
+                            : currentPlatformHasImage ? "Image ready" : `Create image for ${activePlatformTab}`}
                         </button>
-                        {isExported && <SuccessBadge>Image uploaded</SuccessBadge>}
+                        {currentPlatformHasImage && <SuccessBadge>Image uploaded</SuccessBadge>}
                       </div>
 
-                      {exportState === "error" && exportError && (
-                        <ErrorBanner message={`Image export failed — ${exportError}`} />
+                      {exportErrors[activePlatformTab] && (
+                        <ErrorBanner message={`Image export failed — ${exportErrors[activePlatformTab]}`} />
                       )}
 
-                      {/* Platform selector */}
-                      {isExported && (
-                        <div className="space-y-2">
+                      {/* Ready to publish list */}
+                      {anyPlatformHasImage && (
+                        <div className="space-y-4">
                           <p className="text-xs font-semibold uppercase tracking-widest text-slate-400">
-                            Publish to
+                            Ready to publish
                           </p>
-                          <div className="flex flex-wrap gap-2">
-                            {PLATFORMS.map((platform) => {
-                              const isSelected = selectedPlatforms.includes(platform.id);
+                          
+                          <div className="space-y-2">
+                            {selectedPlatforms.map((platformId) => {
+                              const platform = PLATFORMS.find((p) => p.id === platformId);
+                              if (!platform) return null;
+
+                              const variant = platformVariantsState[platformId];
+                              const isMediaReady = variant?.publishStatus === "media_ready";
+                              const isChecked = selectedPlatformsForPublish.includes(platformId);
+                              
+                              // Check if this platform has been published
+                              const publishedResult = publishResult?.results.find((r) => r.platform === platformId);
+                              const isPublished = publishedResult?.status === "published" || publishedResult?.status === "success";
+                              const hasFailed = publishedResult && !isPublished;
+
                               return (
-                                <button
-                                  key={platform.id}
-                                  disabled={!platform.publishEnabled}
-                                  title={platform.publishEnabled ? platform.label : `${platform.label} — coming soon`}
-                                  onClick={() => {
-                                    if (!platform.publishEnabled) return;
-                                    setSelectedPlatforms((prev) =>
-                                      prev.includes(platform.id)
-                                        ? prev.filter((p) => p !== platform.id)
-                                        : [...prev, platform.id]
-                                    );
-                                  }}
-                                  className={`relative flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-medium transition
-                                    ${platform.publishEnabled
-                                      ? isSelected
-                                        ? "border-transparent text-white shadow-sm"
-                                        : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"
-                                      : "border-slate-100 bg-slate-50 text-slate-300 cursor-not-allowed"
-                                    }`}
-                                  style={
-                                    platform.publishEnabled && isSelected
-                                      ? { backgroundColor: platform.color, borderColor: platform.color }
-                                      : undefined
-                                  }
+                                <div
+                                  key={platformId}
+                                  className={`flex items-center gap-3 rounded-xl border px-4 py-3 transition ${
+                                    isPublished
+                                      ? "border-emerald-200 bg-emerald-50"
+                                      : hasFailed
+                                      ? "border-red-200 bg-red-50"
+                                      : isMediaReady
+                                      ? "border-slate-200 bg-white"
+                                      : "border-slate-100 bg-slate-50"
+                                  }`}
                                 >
-                                  <span
-                                    className={
-                                      platform.publishEnabled
-                                        ? isSelected ? "text-white" : "text-slate-500"
-                                        : "text-slate-300"
-                                    }
+                                  {/* Checkbox or status icon */}
+                                  <div className="flex items-center justify-center w-5 h-5">
+                                    {isPublished ? (
+                                      <svg className="w-5 h-5 text-emerald-600" fill="currentColor" viewBox="0 0 20 20">
+                                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                                      </svg>
+                                    ) : hasFailed ? (
+                                      <input
+                                        type="checkbox"
+                                        checked={isChecked}
+                                        onChange={() => {
+                                          setSelectedPlatformsForPublish((prev) =>
+                                            prev.includes(platformId)
+                                              ? prev.filter((p) => p !== platformId)
+                                              : [...prev, platformId]
+                                          );
+                                        }}
+                                        className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                                      />
+                                    ) : isMediaReady ? (
+                                      <input
+                                        type="checkbox"
+                                        checked={isChecked}
+                                        onChange={() => {
+                                          setSelectedPlatformsForPublish((prev) =>
+                                            prev.includes(platformId)
+                                              ? prev.filter((p) => p !== platformId)
+                                              : [...prev, platformId]
+                                          );
+                                        }}
+                                        className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                                      />
+                                    ) : (
+                                      <div className="w-4 h-4 border-2 border-slate-300 rounded bg-slate-100"></div>
+                                    )}
+                                  </div>
+
+                                  {/* Platform icon and name */}
+                                  <div
+                                    className={`flex items-center gap-2 flex-1 ${
+                                      isMediaReady ? "text-slate-900" : "text-slate-400"
+                                    }`}
                                   >
-                                    {platform.icon}
-                                  </span>
-                                  {platform.label}
-                                  {!platform.publishEnabled && (
-                                    <span className="ml-0.5 text-slate-300 text-xs">·</span>
-                                  )}
-                                </button>
+                                    <span
+                                      className={isMediaReady ? "text-slate-600" : "text-slate-300"}
+                                      style={isMediaReady ? { color: platform.color } : undefined}
+                                    >
+                                      {platform.icon}
+                                    </span>
+                                    <span className="font-medium text-sm">{platform.label}</span>
+                                  </div>
+
+                                  {/* Status message */}
+                                  <div className="text-xs">
+                                    {isPublished ? (
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-emerald-700 font-medium">Published ✓</span>
+                                        {publishedResult?.external_url && (
+                                          <a
+                                            href={publishedResult.external_url}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="inline-flex items-center gap-1 text-emerald-700 hover:text-emerald-800 underline"
+                                          >
+                                            View post
+                                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                            </svg>
+                                          </a>
+                                        )}
+                                      </div>
+                                    ) : hasFailed ? (
+                                      <div className="text-red-700">
+                                        <div className="flex items-center gap-1">
+                                          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                                          </svg>
+                                          <span className="font-medium">Failed</span>
+                                        </div>
+                                        {publishedResult?.error && (
+                                          <p className="mt-1 text-xs text-red-600">{publishedResult.error}</p>
+                                        )}
+                                      </div>
+                                    ) : isMediaReady ? (
+                                      <span className="text-slate-500">Ready</span>
+                                    ) : (
+                                      <span className="text-slate-400">Image not created yet</span>
+                                    )}
+                                  </div>
+                                </div>
                               );
                             })}
                           </div>
-                          {selectedPlatforms.length === 0 && (
-                            <p className="text-xs text-amber-600">Select at least one platform to publish.</p>
+
+                          {selectedPlatformsForPublish.length === 0 && !publishResult && (
+                            <p className="text-xs text-amber-600">Check at least one platform to enable publishing.</p>
                           )}
                         </div>
                       )}
 
                       {/* Publish button */}
-                      {isExported && (
+                      {anyPlatformHasImage && !publishResult && (
                         <div className="flex flex-wrap items-center gap-3">
                           <button
                             onClick={handlePublish}
-                            disabled={anyBusy || publishState === "success" || selectedPlatforms.length === 0}
+                            disabled={anyBusy || selectedPlatformsForPublish.length === 0}
                             className="flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
                           >
-                            {isPublishing ? <><Spinner className="h-4 w-4 animate-spin" />Publishing…</> : "Publish"}
+                            {isPublishing ? (
+                              <>
+                                <Spinner className="h-4 w-4 animate-spin" />
+                                Publishing…
+                              </>
+                            ) : (
+                              "Publish"
+                            )}
                           </button>
-                          {publishState === "success" && <SuccessBadge>Published!</SuccessBadge>}
-                          {publishState === "success" && (
-                            <button
-                              onClick={handleNewPost}
-                              className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 transition"
-                            >
-                              <PlusIcon className="h-4 w-4" />
-                              New Post
-                            </button>
-                          )}
                         </div>
                       )}
 
@@ -1107,60 +1517,18 @@ export default function CreatePostPage() {
                         <ErrorBanner message={`Publish request failed — ${publishError}`} />
                       )}
 
-                      {/* Per-platform results */}
-                      {publishResult && (
-                        <div className="space-y-4">
-                          <div className="rounded-xl border border-slate-200 overflow-hidden">
-                            {publishResult.results.map((r) => {
-                              const succeeded = r.status === "published" || r.status === "success";
-                              return (
-                                <div
-                                  key={r.platform}
-                                  className={`flex items-start gap-3 px-4 py-3 text-sm border-b last:border-b-0 ${
-                                    succeeded ? "bg-emerald-50 border-emerald-100" : "bg-red-50 border-red-100"
-                                  }`}
-                                >
-                                  <span className={`mt-0.5 font-semibold capitalize ${succeeded ? "text-emerald-700" : "text-red-700"}`}>
-                                    {r.platform}
-                                  </span>
-                                  <div className="flex-1 min-w-0">
-                                    {succeeded
-                                      ? <span className="text-emerald-700 font-medium">Published</span>
-                                      : <span className="text-red-700 font-medium">Failed</span>}
-                                    {r.error && (
-                                      <p className="mt-0.5 text-xs text-red-600 break-words">{r.error}</p>
-                                    )}
-                                  </div>
-                                  {succeeded && r.external_url && (
-                                    <a
-                                      href={r.external_url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-white border border-emerald-200 px-3 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50 transition"
-                                    >
-                                      View post
-                                      <ExternalLinkIcon className="h-3 w-3" />
-                                    </a>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-
-                          {/* Create New Post button - show after successful publish */}
-                          {(publishResult.publish_status === "published" || publishResult.publish_status === "partial") && (
-                            <div className="flex justify-center pt-2">
-                              <button
-                                onClick={resetForm}
-                                className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-all duration-200"
-                              >
-                                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                                </svg>
-                                Create New Post
-                              </button>
-                            </div>
-                          )}
+                      {/* Create New Post button - show after successful publish */}
+                      {publishResult && (publishResult.publish_status === "published" || publishResult.publish_status === "partial") && (
+                        <div className="flex justify-center pt-2">
+                          <button
+                            onClick={resetForm}
+                            className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 transition-all duration-200"
+                          >
+                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                            </svg>
+                            Create New Post
+                          </button>
                         </div>
                       )}
                     </div>
@@ -1178,6 +1546,9 @@ export default function CreatePostPage() {
                 <div className="flex gap-3 mb-4 overflow-x-auto pb-2">
                   {TEMPLATES.map((tpl) => {
                     const isActive = selectedVariant === tpl.id;
+                    const currentVariant = activePlatformTab ? platformVariantsState[activePlatformTab] : null;
+                    const cardWidth = currentVariant?.width || 1080;
+                    const cardHeight = currentVariant?.height || 1350;
                     // Tiny thumbnail previews — same scale trick as the main preview
                     return (
                       <button
@@ -1194,8 +1565,8 @@ export default function CreatePostPage() {
                           <div style={{ 
                             transformOrigin: "top left", 
                             transform: "scale(0.067)", // Scale to 72px wide
-                            width: platformSettings?.card_width || 1080, 
-                            height: platformSettings?.card_height || 1350, 
+                            width: cardWidth, 
+                            height: cardHeight, 
                             pointerEvents: "none" 
                           }}>
                             <NewsPostCard
@@ -1203,11 +1574,11 @@ export default function CreatePostPage() {
                               source={activeArticle?.source ?? "Source"}
                               date={activeArticle?.date ?? "DATE"}
                               headline={editedHeadline || data?.headline || "Headline text goes here"}
-                              description={editedDescription || data?.description || "Description preview"}
+                              description={currentVariant?.description || "Description preview"}
                               hashtags={data?.hashtags ?? []}
                               variant={tpl.id}
-                              width={platformSettings?.card_width || 1080}
-                              height={platformSettings?.card_height || 1350}
+                              width={cardWidth}
+                              height={cardHeight}
                             />
                           </div>
                         </div>
@@ -1234,39 +1605,52 @@ export default function CreatePostPage() {
                   <div
                     style={{ width: "100%", aspectRatio: "4/5", overflow: "hidden", borderRadius: 12 }}
                   >
-                    <div style={{ 
-                      transformOrigin: "top left", 
-                      transform: `scale(${315 / (platformSettings?.card_width || 1080)})`, 
-                      width: platformSettings?.card_width || 1080, 
-                      height: platformSettings?.card_height || 1350 
-                    }}>
-                      <NewsPostCard
-                        imageUrl={activeImageUrl}
-                        source={activeArticle?.source ?? ""}
-                        date={activeArticle?.date ?? ""}
-                        headline={editedHeadline}
-                        description={editedDescription}
-                        hashtags={data!.hashtags}
-                        variant={selectedVariant}
-                        width={platformSettings?.card_width || 1080}
-                        height={platformSettings?.card_height || 1350}
-                        onChangeHeadline={(newHeadline) => {
-                          setEditedHeadline(newHeadline);
-                        }}
-                        onChangeDescription={(newDescription) => {
-                          setEditedDescription(newDescription);
-                        }}
-                      />
-                    </div>
-                    
-                    {/* Character counter */}
-                    {platformSettings && (
-                      <div className="mt-3 text-xs text-center">
-                        <span className={editedDescription.length > platformSettings.description_max_chars ? "text-red-600 font-semibold" : "text-slate-500"}>
-                          {editedDescription.length} / {platformSettings.description_max_chars} characters
-                        </span>
-                      </div>
-                    )}
+                    {(() => {
+                      const currentVariant = activePlatformTab ? platformVariantsState[activePlatformTab] : null;
+                      const cardWidth = currentVariant?.width || 1080;
+                      const cardHeight = currentVariant?.height || 1350;
+                      const currentDescription = currentVariant?.description || "";
+                      
+                      return (
+                        <>
+                          <div style={{ 
+                            transformOrigin: "top left", 
+                            transform: `scale(${315 / cardWidth})`, 
+                            width: cardWidth, 
+                            height: cardHeight 
+                          }}>
+                            <NewsPostCard
+                              imageUrl={activeImageUrl}
+                              source={activeArticle?.source ?? ""}
+                              date={activeArticle?.date ?? ""}
+                              headline={editedHeadline}
+                              description={currentDescription}
+                              hashtags={data!.hashtags}
+                              variant={selectedVariant}
+                              width={cardWidth}
+                              height={cardHeight}
+                              onChangeHeadline={(newHeadline) => {
+                                setEditedHeadline(newHeadline);
+                              }}
+                              onChangeDescription={(newDescription) => {
+                                if (activePlatformTab) {
+                                  updatePlatformDescription(activePlatformTab, newDescription);
+                                }
+                              }}
+                            />
+                          </div>
+                          
+                          {/* Character counter */}
+                          {currentVariant && (
+                            <div className="mt-3 text-xs text-center">
+                              <span className={currentDescription.length > currentVariant.description_max_chars ? "text-red-600 font-semibold" : "text-slate-500"}>
+                                {currentDescription.length} / {currentVariant.description_max_chars} characters
+                              </span>
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
                   </div>
                 ) : (
                   <div
@@ -1287,18 +1671,25 @@ export default function CreatePostPage() {
                 )}
 
                 <p className="mt-3 text-xs text-center text-slate-400">
-                  {platformSettings?.aspect_ratio || "4:5"} · {platformSettings?.card_width || 1080} × {platformSettings?.card_height || 1350} px
+                  {(() => {
+                    const currentVariant = activePlatformTab ? platformVariantsState[activePlatformTab] : null;
+                    const aspectRatio = currentVariant?.aspect_ratio || "4:5";
+                    const cardWidth = currentVariant?.width || 1080;
+                    const cardHeight = currentVariant?.height || 1350;
+                    return `${aspectRatio} · ${cardWidth} × ${cardHeight} px`;
+                  })()}
                 </p>
               </div>
 
-              {isExported && exportedDataUrl && (
+              {/* Show current platform's exported image if available */}
+              {activePlatformTab && platformVariantsState[activePlatformTab]?.mediaUrl && (
                 <div className="bg-white rounded-2xl border border-emerald-200 shadow-sm p-5">
-                  <SectionLabel>Exported image</SectionLabel>
+                  <SectionLabel>Exported image ({activePlatformTab})</SectionLabel>
                   <div className="overflow-hidden rounded-xl border border-slate-200" style={{ aspectRatio: "4/5" }}>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={exportedDataUrl}
-                      alt="Exported post card"
+                      src={platformVariantsState[activePlatformTab].mediaUrl!}
+                      alt={`Exported post card for ${activePlatformTab}`}
                       className="w-full h-full object-cover"
                     />
                   </div>
@@ -1317,17 +1708,26 @@ export default function CreatePostPage() {
       {showCardPanel && (
         <div aria-hidden="true" style={{ position: "fixed", left: -9999, top: 0, pointerEvents: "none" }}>
           <div ref={captureRef}>
-            <NewsPostCard
-              imageUrl={activeImageUrl}
-              source={activeArticle?.source ?? ""}
-              date={activeArticle?.date ?? ""}
-              headline={editedHeadline}
-              description={editedDescription}
-              hashtags={data!.hashtags}
-              variant={selectedVariant}
-              width={platformSettings?.card_width || 1080}
-              height={platformSettings?.card_height || 1350}
-            />
+            {(() => {
+              const currentVariant = activePlatformTab ? platformVariantsState[activePlatformTab] : null;
+              const cardWidth = currentVariant?.width || 1080;
+              const cardHeight = currentVariant?.height || 1350;
+              const currentDescription = currentVariant?.description || "";
+              
+              return (
+                <NewsPostCard
+                  imageUrl={activeImageUrl}
+                  source={activeArticle?.source ?? ""}
+                  date={activeArticle?.date ?? ""}
+                  headline={editedHeadline}
+                  description={currentDescription}
+                  hashtags={data!.hashtags}
+                  variant={selectedVariant}
+                  width={cardWidth}
+                  height={cardHeight}
+                />
+              );
+            })()}
           </div>
         </div>
       )}

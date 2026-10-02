@@ -44,6 +44,7 @@ model social_post_history {
   updated_at               DateTime?                  @default(now()) @db.Timestamptz(6)
   users                    users                      @relation(fields: [user_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   social_post_publications social_post_publications[]
+  social_post_platform_variants social_post_platform_variants[]
 
   @@index([id], map: "ix_social_post_history_id")
   @@index([user_id], map: "ix_social_post_history_user_id")
@@ -84,4 +85,26 @@ model users {
   social_post_template_prefs social_post_template_prefs?
 
   @@index([id], map: "ix_users_id")
+}
+
+model social_post_platform_variants {
+  id                  Int       @id @default(autoincrement())
+  history_id          Int
+  platform            String    @db.VarChar
+  description         String?
+  media_url           String?   @db.VarChar
+  aspect_ratio        String?   @db.VarChar
+  width               Int?
+  height              Int?
+  publish_status      String?   @default("draft") @db.VarChar
+  external_id         String?   @db.VarChar
+  external_url        String?   @db.VarChar
+  error                String?
+  published_at        DateTime? @db.Timestamptz(6)
+  created_at          DateTime? @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime? @default(now()) @db.Timestamptz(6)
+  social_post_history  social_post_history @relation(fields: [history_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([history_id])
+  @@index([platform])
 }

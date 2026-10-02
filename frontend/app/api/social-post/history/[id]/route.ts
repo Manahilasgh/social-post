@@ -26,7 +26,7 @@ async function getOwnedEntry(id: number, userId: number) {
 
 /**
  * GET /api/social-post/history/[id]
- * Fetch a single history entry by id
+ * Fetch a single history entry by id with platform variants
  */
 export async function GET(
   request: NextRequest,
@@ -44,8 +44,17 @@ export async function GET(
       );
     }
 
-    const entry = await getOwnedEntry(entryId, user.id);
-    return NextResponse.json(entry);
+    // Verify ownership and get entry with variants
+    await getOwnedEntry(entryId, user.id);
+    
+    const entryWithVariants = await prisma.social_post_history.findUnique({
+      where: { id: entryId },
+      include: {
+        social_post_platform_variants: true,
+      },
+    });
+
+    return NextResponse.json(entryWithVariants);
   } catch (error) {
     return handleApiError(error);
   }
@@ -53,7 +62,7 @@ export async function GET(
 
 /**
  * PUT /api/social-post/history/[id]
- * Update an existing history entry's text fields
+ * Update an existing history entry's text fields and platform variants
  * Does NOT update media_filename or publish_status
  */
 export async function PUT(
@@ -84,6 +93,7 @@ export async function PUT(
       hashtags,
       news_results,
       settings_snapshot,
+      variants,
     } = body;
 
     // Build update data - only include fields that are provided
@@ -112,7 +122,57 @@ export async function PUT(
       data: updateData,
     });
 
-    return NextResponse.json(updatedEntry);
+    // Handle platform variants if provided
+    if (variants && typeof variants === "object") {
+      const variantPromises = Object.entries(variants).map(async ([platform, variantData]: [string, any]) => {
+        // Check if variant exists
+        const existingVariant = await prisma.social_post_platform_variants.findFirst({
+          where: {
+            history_id: entryId,
+            platform: platform,
+          },
+        });
+
+        if (existingVariant) {
+          // Update existing variant
+          return prisma.social_post_platform_variants.update({
+            where: { id: existingVariant.id },
+            data: {
+              description: variantData.description || null,
+              aspect_ratio: variantData.aspect_ratio || null,
+              width: variantData.width || null,
+              height: variantData.height || null,
+              updated_at: new Date(),
+            },
+          });
+        } else {
+          // Create new variant
+          return prisma.social_post_platform_variants.create({
+            data: {
+              history_id: entryId,
+              platform: platform,
+              description: variantData.description || null,
+              aspect_ratio: variantData.aspect_ratio || null,
+              width: variantData.width || null,
+              height: variantData.height || null,
+              publish_status: "draft",
+            },
+          });
+        }
+      });
+
+      await Promise.all(variantPromises);
+    }
+
+    // Fetch the updated entry with variants included
+    const entryWithVariants = await prisma.social_post_history.findUnique({
+      where: { id: entryId },
+      include: {
+        social_post_platform_variants: true,
+      },
+    });
+
+    return NextResponse.json(entryWithVariants);
   } catch (error) {
     return handleApiError(error);
   }

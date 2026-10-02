@@ -9,6 +9,26 @@ import { useAuth } from "@/lib/auth-context";
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * Per-platform rendering of a post. Exported card images are uploaded against
+ * the platform variant, so `media_url` is where the finished card image lives.
+ */
+export interface PlatformVariant {
+  id: number;
+  history_id: number;
+  platform: string;
+  description: string | null;
+  media_url: string | null;
+  aspect_ratio: string | null;
+  width: number | null;
+  height: number | null;
+  publish_status: PublishStatus | null;
+  external_id: string | null;
+  external_url: string | null;
+  error: string | null;
+  published_at: string | null;
+}
+
 export interface HistoryEntry {
   id: number;
   user_id: number;
@@ -24,6 +44,8 @@ export interface HistoryEntry {
   published_at: string | null;
   created_at: string;
   updated_at: string;
+  /** Included by GET /api/social-post/history and GET /api/social-post/history/[id] */
+  social_post_platform_variants?: PlatformVariant[];
 }
 
 export type PublishStatus =
@@ -50,6 +72,53 @@ export function mediaUrl(mediaFilename: string): string {
   
   // For backward compatibility with old filename-only entries
   return `/uploads/social/${mediaFilename}`;
+}
+
+/**
+ * Resolve the thumbnail for a history card.
+ *
+ * Card images are exported and uploaded per platform, so the finished image is
+ * stored on `social_post_platform_variants.media_url`. `media_filename` is the
+ * legacy single-image column and is only kept as a fallback for older entries
+ * (and for posts created through the old /media endpoint).
+ */
+export function entryThumbnail(
+  entry: Pick<HistoryEntry, "media_filename" | "social_post_platform_variants">
+): string | null {
+  if (entry.media_filename) {
+    return mediaUrl(entry.media_filename);
+  }
+
+  const variant = entry.social_post_platform_variants?.find((v) => v.media_url);
+  return variant?.media_url ? mediaUrl(variant.media_url) : null;
+}
+
+/**
+ * Derive the status to display for a history card.
+ *
+ * The parent row's `publish_status` only changes once a post is actually
+ * published, so it stays "draft" while per-platform images are being uploaded.
+ * Roll the variant statuses up so the badge reflects reality.
+ */
+export function entryStatus(
+  entry: Pick<HistoryEntry, "publish_status" | "social_post_platform_variants">
+): PublishStatus {
+  // Post-level outcomes written by the publish endpoint are authoritative.
+  if (
+    entry.publish_status === "published" ||
+    entry.publish_status === "partial" ||
+    entry.publish_status === "publishing"
+  ) {
+    return entry.publish_status;
+  }
+
+  const variants = entry.social_post_platform_variants ?? [];
+
+  if (variants.some((v) => v.publish_status === "published")) return "published";
+  if (variants.some((v) => v.publish_status === "media_ready" || v.media_url)) return "media_ready";
+  if (variants.some((v) => v.publish_status === "failed")) return "failed";
+
+  return entry.publish_status ?? "draft";
 }
 
 export const STATUS_STYLES: Record<
@@ -205,16 +274,15 @@ export default function HistoryPage() {
                 // Only use the confirmed-local uploaded card image.
                 // Never use external news thumbnails here — they're third-party
                 // URLs that may be blocked, expired, or CORS-restricted.
-                const thumb = entry.media_filename
-                  ? mediaUrl(entry.media_filename)
-                  : null;
+                const thumb = entryThumbnail(entry);
+                const status = entryStatus(entry);
 
                 return (
                   <button
                     key={entry.id}
                     onClick={() => {
                       // For drafts, navigate to create-post page for editing
-                      if (entry.publish_status === "draft" || entry.publish_status === "media_ready") {
+                      if (status === "draft" || status === "media_ready") {
                         router.push(`/dashboard/create?draft=${entry.id}`);
                       } else {
                         // For published posts, show detail panel
@@ -241,7 +309,7 @@ export default function HistoryPage() {
 
                       {/* Status badge — overlaid on bottom of image */}
                       <div className="absolute bottom-0 left-0 right-0 px-2.5 pb-2.5 pt-8 bg-gradient-to-t from-black/60 to-transparent">
-                        <StatusBadge status={entry.publish_status} />
+                        <StatusBadge status={status} />
                       </div>
                     </div>
 

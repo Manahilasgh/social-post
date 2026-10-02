@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@/lib/auth-context";
 import { useRouter } from "next/navigation";
 import { PLATFORMS } from "@/lib/platforms";
@@ -17,6 +17,38 @@ interface ConnectedAccount {
 }
 
 // ---------------------------------------------------------------------------
+// Cache
+// ---------------------------------------------------------------------------
+
+const ACCOUNTS_CACHE_KEY = "connected_accounts_cache";
+
+/**
+ * Last known connected accounts, cached so returning to this tab paints the
+ * "Connected" badge immediately instead of waiting on a network round-trip.
+ * The list is always revalidated in the background afterwards.
+ */
+function readCachedAccounts(): ConnectedAccount[] | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(ACCOUNTS_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as ConnectedAccount[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedAccounts(accounts: ConnectedAccount[]) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(ACCOUNTS_CACHE_KEY, JSON.stringify(accounts));
+  } catch {
+    // Storage disabled or full — the cache is a nice-to-have, never fatal.
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
@@ -24,11 +56,23 @@ export default function AccountsPage() {
   const router = useRouter();
   const { token } = useAuth();
   
-  const [accounts, setAccounts] = useState<ConnectedAccount[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Paint from cache immediately so a remount never blanks the grid.
+  const [initialCache] = useState(readCachedAccounts);
+  const [accounts, setAccounts] = useState<ConnectedAccount[]>(initialCache ?? []);
+  // Only a cold start (nothing cached) blocks the grid behind a spinner.
+  const [loading, setLoading] = useState(initialCache === null);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [disconnecting, setDisconnecting] = useState<number | null>(null);
+
+  // Collapses the mount fetch, the focus fetch and the OAuth fetch into one
+  // request when they overlap.
+  const inFlightRef = useRef<Promise<void> | null>(null);
+  // Once we have any data, later fetches revalidate quietly in the background.
+  const hasDataRef = useRef(initialCache !== null);
+
+  const busy = loading || refreshing;
 
   const handleDisconnect = async (account: ConnectedAccount) => {
     const platformName = PLATFORMS.find(p => p.id === account.platform)?.label || account.platform;
@@ -75,38 +119,66 @@ export default function AccountsPage() {
     }
   };
 
-  const fetchAccounts = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    setSuccessMessage(null); // Clear any existing success messages
-    try {
-      const headers: HeadersInit = {};
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
-      }
-      
-      const res = await fetch(`/api/social-accounts`, { headers });
-      
-      if (res.status === 401) {
-        localStorage.removeItem("auth_token");
-        router.push("/login");
-        return;
-      }
-      
-      if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`);
-      const data: ConnectedAccount[] = await res.json();
-      setAccounts(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
-    } finally {
-      setLoading(false);
+  const fetchAccounts = useCallback(async (force = false) => {
+    // A fetch is already running (mount + focus both fire on return to the
+    // tab) — reuse it instead of stacking a second round-trip.
+    if (inFlightRef.current) return inFlightRef.current;
+
+    // Revalidate in the background once we already have something on screen,
+    // so the grid never flashes a spinner over data we already hold.
+    const quiet = hasDataRef.current && !force;
+    if (quiet) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
     }
+    setError(null);
+
+    const run = (async () => {
+      try {
+        const headers: HeadersInit = {};
+        if (token) {
+          headers["Authorization"] = `Bearer ${token}`;
+        }
+
+        const res = await fetch(`/api/social-accounts`, { headers });
+
+        if (res.status === 401) {
+          localStorage.removeItem("auth_token");
+          router.push("/login");
+          return;
+        }
+
+        if (!res.ok) throw new Error(`${res.status}: ${res.statusText}`);
+        const data: ConnectedAccount[] = await res.json();
+        setAccounts(data);
+        writeCachedAccounts(data);
+        hasDataRef.current = true;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Unknown error");
+      } finally {
+        if (quiet) {
+          setRefreshing(false);
+        } else {
+          setLoading(false);
+        }
+        inFlightRef.current = null;
+      }
+    })();
+
+    inFlightRef.current = run;
+    return run;
   }, [token, router]);
 
-  // Handle Facebook OAuth callback parameters on mount
-  const searchParams = new URLSearchParams(window.location.search);
+  // Initial load. Previously the grid only ever populated on a window `focus`
+  // event, so reopening this tab sat on a spinner (and showed no "Connected"
+  // badge) until the user alt-tabbed away and back.
   useEffect(() => {
-    
+    fetchAccounts();
+  }, [fetchAccounts]);
+
+  // Handle Facebook OAuth callback parameters on mount
+  useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search);
     const fbConnected = searchParams.get("fb_connected");
     const fbError = searchParams.get("fb_error");
@@ -140,7 +212,10 @@ export default function AccountsPage() {
       newUrl.searchParams.delete("fb_error");
       router.replace(newUrl.pathname + newUrl.search);
     }
-  }, [searchParams, fetchAccounts, router]);
+    // Intentionally keyed on stable values only. Reading window.location inside
+    // the effect and putting a fresh URLSearchParams in the dependency array
+    // made this run on every render.
+  }, [fetchAccounts, router]);
 
   // Refetch when the tab regains focus — catches the return from Facebook OAuth
   useEffect(() => {
@@ -176,11 +251,11 @@ export default function AccountsPage() {
             </p>
           </div>
           <button
-            onClick={fetchAccounts}
-            disabled={loading}
+            onClick={() => fetchAccounts(true)}
+            disabled={busy}
             className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 shadow-sm hover:bg-slate-50 disabled:opacity-50 transition"
           >
-            <RefreshIcon className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+            <RefreshIcon className={`h-4 w-4 ${busy ? "animate-spin" : ""}`} />
             Refresh
           </button>
         </div>
@@ -210,7 +285,7 @@ export default function AccountsPage() {
               <p className="font-semibold">Could not load accounts</p>
               <p className="mt-0.5">{error}</p>
               <button
-                onClick={fetchAccounts}
+                onClick={() => fetchAccounts(true)}
                 className="mt-2 underline underline-offset-2 font-medium"
               >
                 Try again

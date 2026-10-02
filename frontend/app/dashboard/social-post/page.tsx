@@ -228,7 +228,7 @@ export default function SocialPostPage() {
       const localUrl = URL.createObjectURL(file);
       setExportedDataUrl(localUrl);
 
-      await uploadCardMedia(historyId, file, token);
+      await uploadCardMedia(historyId, "facebook", file, token);
       setExportState("success");
     } catch (err) {
       setExportError(err instanceof Error ? err.message : "Unknown error");
