@@ -23,7 +23,7 @@ FB_API_VERSION = "v21.0"
 FB_OAUTH_DIALOG_URL = f"https://www.facebook.com/{FB_API_VERSION}/dialog/oauth"
 FB_GRAPH_URL = f"https://graph.facebook.com/{FB_API_VERSION}"
 
-FB_SCOPES = "pages_show_list,pages_manage_posts,pages_read_engagement"
+FB_SCOPES = "pages_show_list,pages_manage_posts,pages_read_engagement,business_management"
 
 
 # ---------- List connected accounts ----------
